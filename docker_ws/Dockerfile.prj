@@ -8,5 +8,6 @@ RUN apt update -y && apt install -y ros-jazzy-ros-gz
 RUN apt update -y && apt install -y ros-jazzy-navigation2 \
                                     ros-jazzy-nav2-bringup ros-jazzy-cartographer \
                                     ros-jazzy-cartographer-ros
+RUN apt update -y && apt install -y ros-jazzy-slam-toolbox                                
 WORKDIR /root/ros_workspace
                                              
