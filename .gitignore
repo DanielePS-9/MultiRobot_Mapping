@@ -1,0 +1,13 @@
+# Cartelle generate da colcon build
+install/
+build/
+log/
+
+# File temporanei o di log del sistema
+.vscode/
+*.pyc
+__pycache__/
+.DS_Store
+
+# File pesanti o di swap
+*.swp
