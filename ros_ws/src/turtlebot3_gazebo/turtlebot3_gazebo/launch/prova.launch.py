@@ -80,20 +80,6 @@ def generate_launch_description():
         }.items()
     )
 
-    stereo_camera_bridge_cmd = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='stereo_camera_bridge',
-        arguments=[
-            # 1. Bridge per la Point Cloud 3D (Da Gazebo [GZ] a ROS 2 [ROS])
-            '/camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked',
-            # 2. Bridge opzionale per la profondità se serve l'immagine depth pura
-            '/camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image'
-        ],
-        parameters=[{'use_sim_time': use_sim_time}],
-        output='screen'
-    )
-
     set_env_vars_resources = AppendEnvironmentVariable(
             'GZ_SIM_RESOURCE_PATH',
             os.path.join(
@@ -109,7 +95,5 @@ def generate_launch_description():
     ld.add_action(gazebo_cmd)
     ld.add_action(spawn_turtlebot_cmd)
     ld.add_action(robot_state_publisher_cmd)
-
-    ld.add_action(stereo_camera_bridge_cmd)
 
     return ld
