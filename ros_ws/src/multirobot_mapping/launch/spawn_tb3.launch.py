@@ -100,15 +100,7 @@ def generate_launch_description():
             output='screen',
         )
 
-        gazebo_ros_image_bridge = Node(
-            package='ros_gz_image',
-            executable='image_bridge',
-            namespace=namespace,
-            arguments=['/camera/image_raw'],
-            output='screen',
-        )
-
-        return [gazebo_ros_spawner, gazebo_ros_bridge, gazebo_ros_image_bridge, robot_state_publisher]
+        return [gazebo_ros_spawner, gazebo_ros_bridge, robot_state_publisher]
 
     ld = LaunchDescription()
 

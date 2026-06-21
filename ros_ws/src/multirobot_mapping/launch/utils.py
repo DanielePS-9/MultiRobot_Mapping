@@ -34,7 +34,9 @@ def create_namespaced_bridge_yaml(base_yaml_path, namespace):
 
     namespaced_bridges = []
     for bridge in bridges:
-        if bridge['ros_topic_name'] not in ['clock', 'tf','tf_static']:
+        if bridge['ros_topic_name'] == 'clock' or bridge['gz_topic_name'] == 'clock':
+            continue
+        if bridge['ros_topic_name'] not in ['tf','tf_static']:
             bridge['ros_topic_name'] = f"{namespace_with_slash}{bridge['ros_topic_name']}"
         if bridge['gz_topic_name'] not in ['clock']:
             bridge['gz_topic_name'] = f"{namespace_with_slash}{bridge['gz_topic_name']}"

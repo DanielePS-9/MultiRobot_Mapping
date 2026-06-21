@@ -46,7 +46,14 @@ def generate_launch_description():
             os.path.join(
                 get_package_share_directory('turtlebot3_gazebo'),
                 'models'))
-
+    
+    clock_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='global_clock_bridge',
+        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        output='screen'
+    )
 
                                 # ROBOT1
     robot1_spawn_cmd = IncludeLaunchDescription(
@@ -111,8 +118,7 @@ def generate_launch_description():
     # Add the commands to the launch description
     ld.add_action(set_env_vars_resources)
     ld.add_action(gazebo_cmd)
-    # ld.add_action(spawn_turtlebot1_cmd)
-    # ld.add_action(robot_state_publisher1_cmd)
+    ld.add_action(clock_bridge)
     ld.add_action(robot1_spawn_cmd)
     ld.add_action(robot1_tf_publisher)
     ld.add_action(robot2_spawn_cmd)
