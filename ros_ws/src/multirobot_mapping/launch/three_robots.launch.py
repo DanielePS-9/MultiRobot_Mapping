@@ -70,6 +70,7 @@ def generate_launch_description():
         executable='parameter_bridge',
         name='global_clock_bridge',
         arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
     )
  
@@ -89,7 +90,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_robot1_odom',
-        arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/odom']
+        arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/map']
     )
  
    
@@ -110,7 +111,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_robot2_odom',
-        arguments=[x_pose_r2, y_pose_r2, '0.01', '0.0', '0.0', '0.0', 'world', 'robot2/odom']
+        arguments=[x_pose_r2, y_pose_r2, '0.01', '0.0', '0.0', '0.0', 'world', 'robot2/map']
     )
  
    
@@ -130,7 +131,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_robot3_odom',
-        arguments=[x_pose_r3, y_pose_r3, '0.01', '0.0', '0.0', '0.0', 'world', 'robot3/odom']
+        arguments=[x_pose_r3, y_pose_r3, '0.01', '0.0', '0.0', '0.0', 'world', 'robot3/map']
     )
  
  
