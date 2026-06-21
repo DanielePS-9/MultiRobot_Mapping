@@ -1,7 +1,7 @@
 #!/bin/bash
 
 IMAGE_NAME="ros"
-IMAGE_TAG="prjprj_lidar"
+IMAGE_TAG="prj_lidar"
  
 echo "Building Docker image: ${IMAGE_NAME}:${IMAGE_TAG}"
  
