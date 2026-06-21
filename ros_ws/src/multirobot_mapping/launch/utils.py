@@ -78,6 +78,7 @@ def load_sdf_with_namespace(model_path, namespace):
 
         '<frame_id>odom</frame_id>': f'<frame_id>{namespace}/odom</frame_id>',
         '<child_frame_id>base_footprint</child_frame_id>': f'<child_frame_id>{namespace}/base_footprint</child_frame_id>',
+        '<gz_frame_id>base_scan</gz_frame_id>': f'<gz_frame_id>{namespace}/base_scan</gz_frame_id>',
     }
 
     for original, replacement in topic_map.items():

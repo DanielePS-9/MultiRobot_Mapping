@@ -14,7 +14,6 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     urdf_file_name = 'turtlebot3_' + TURTLEBOT3_MODEL + '.urdf'
     frame_prefix = LaunchConfiguration('frame_prefix', default='')
-    # remappings = [("/tf", "tf"), ("/tf_static", "tf_static")]
 
     print('urdf_file_name : {}'.format(urdf_file_name))
 
@@ -39,7 +38,6 @@ def generate_launch_description():
             package='robot_state_publisher',
             executable='robot_state_publisher',
             name='robot_state_publisher',
-            # remappings = remappings,
             output='screen',
             parameters=[{
                 'use_sim_time': use_sim_time,
