@@ -6,4 +6,4 @@ docker run -it --rm --net host --ipc host --privileged \
     -e XAUTHORITY=$XAUTHORITY \
     -v ./ros_ws/:/root/ros_workspace \
     --name multirobot \
-    ros:prj bash
+    ros:prj_lidar bash
