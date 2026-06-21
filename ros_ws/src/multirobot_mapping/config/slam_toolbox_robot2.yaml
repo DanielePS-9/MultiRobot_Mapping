@@ -1,0 +1,34 @@
+robot2/slam_toolbox:
+  ros__parameters:
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+ 
+    use_sim_time: true
+    autostart: true
+    odom_frame: robot2/odom
+    base_frame: robot2/base_footprint
+    map_frame: robot2/map
+    map_name: /robot2/map
+    use_map_saver: true
+    scan_topic: scan
+ 
+    mode: mapping
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.05
+    map_update_interval: 2.0
+    max_laser_range: 3.5
+    minimum_time_interval: 0.1
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    do_loop_closure: true
+    loop_search_maximum_distance: 3.0
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0  
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+    resolution: 0.05
