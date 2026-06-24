@@ -20,6 +20,10 @@ def generate_launch_description():
         params_file  = context.launch_configurations['params_file']
         autostart    = context.launch_configurations['autostart']
 
+        use_sim_time_bool = context.launch_configurations['use_sim_time'] == 'true'
+        sim_time_param = {'use_sim_time': use_sim_time_bool}
+
+
         # RewrittenYaml: trasforma "controller_server:" in "/robot1/controller_server:"
         configured_params = ParameterFile(
             RewrittenYaml(
@@ -40,7 +44,7 @@ def generate_launch_description():
             name='controller_server',
             namespace=namespace,
             output='screen',
-            parameters=[configured_params],
+            parameters=[configured_params,sim_time_param],
             remappings=remappings + [('cmd_vel', 'cmd_vel_nav')],
         )
 
@@ -50,7 +54,7 @@ def generate_launch_description():
             name='smoother_server',
             namespace=namespace,
             output='screen',
-            parameters=[configured_params],
+            parameters=[configured_params,sim_time_param],
             remappings=remappings,
         )
 
@@ -60,7 +64,7 @@ def generate_launch_description():
             name='planner_server',
             namespace=namespace,
             output='screen',
-            parameters=[configured_params],
+            parameters=[configured_params,sim_time_param],
             remappings=remappings,
         )
 
@@ -70,7 +74,7 @@ def generate_launch_description():
             name='behavior_server',
             namespace=namespace,
             output='screen',
-            parameters=[configured_params],
+            parameters=[configured_params,sim_time_param],
             remappings=remappings,
         )
 
@@ -80,7 +84,7 @@ def generate_launch_description():
             name='bt_navigator',
             namespace=namespace,
             output='screen',
-            parameters=[configured_params],
+            parameters=[configured_params,sim_time_param],
             remappings=remappings + [
                 ('goal_pose', '/goal_pose'),
             ],
@@ -92,7 +96,7 @@ def generate_launch_description():
             name='waypoint_follower',
             namespace=namespace,
             output='screen',
-            parameters=[configured_params],
+            parameters=[configured_params,sim_time_param],
             remappings=remappings,
         )
 
@@ -102,7 +106,7 @@ def generate_launch_description():
             name='velocity_smoother',
             namespace=namespace,
             output='screen',
-            parameters=[configured_params],
+            parameters=[configured_params,sim_time_param],
             remappings=remappings + [
                 ('cmd_vel', 'cmd_vel_nav'),
                 ('cmd_vel_smoothed', 'cmd_vel'),

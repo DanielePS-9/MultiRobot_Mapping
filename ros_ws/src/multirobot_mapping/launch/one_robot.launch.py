@@ -89,7 +89,8 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='world_to_robot1_odom',
         arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/map'],
-        parameters=[{'use_sim_time': use_sim_time}]
+        parameters=[{'use_sim_time': use_sim_time}],
+        remappings=[('/tf_static', '/robot1/tf_static')]
     )
 
     ld = LaunchDescription()

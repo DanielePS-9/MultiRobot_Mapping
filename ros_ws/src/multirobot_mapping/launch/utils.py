@@ -37,11 +37,14 @@ def create_namespaced_bridge_yaml(base_yaml_path, namespace):
         if bridge['ros_topic_name'] == 'clock' or bridge['gz_topic_name'] == 'clock':
             continue
             
-        # MODIFICA: Applica il namespace a tutti i topic ROS, inclusi tf e tf_static
         bridge['ros_topic_name'] = f"{namespace_with_slash}{bridge['ros_topic_name']}"
+
+        if bridge.get('ros_type_name') == 'geometry_msgs/msg/TwistStamped':
+            bridge['ros_type_name'] = 'geometry_msgs/msg/Twist'
         
         if bridge['gz_topic_name'] not in ['clock']:
             bridge['gz_topic_name'] = f"{namespace_with_slash}{bridge['gz_topic_name']}"
+            
         namespaced_bridges.append(bridge)
 
     output_path = f"/tmp/{namespace.strip('/')}_bridge.yaml"
