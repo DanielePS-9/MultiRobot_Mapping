@@ -74,12 +74,22 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
     )
+
+    robot1_tf_static_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='robot1_tf_relay',
+        arguments=['/robot1/tf_static', '/tf_static'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
    
     robot1_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_robot1_odom',
-        arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/map']
+        arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/map'],
+        parameters=[{'use_sim_time': use_sim_time}]
     )
 
     ld = LaunchDescription()
@@ -90,5 +100,6 @@ def generate_launch_description():
     ld.add_action(clock_bridge)
     ld.add_action(robot1_spawn_cmd)
     ld.add_action(robot1_tf_relay)
+    ld.add_action(robot1_tf_static_relay)
     ld.add_action(robot1_tf_publisher)
     return ld
