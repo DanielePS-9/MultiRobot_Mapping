@@ -13,43 +13,26 @@ from launch_ros.actions import Node
 def generate_launch_description():
     launch_file_dir = os.path.join(get_package_share_directory('multirobot_mapping'), 'launch')
     ros_gz_sim = get_package_share_directory('ros_gz_sim')
+    rviz_config_path = os.path.join(get_package_share_directory('multirobot_mapping'), 'rviz', 'multirobot_view.rviz')
  
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
  
-    x_pose_r1 = LaunchConfiguration('x_pose_r1', default='2.0')
+    x_pose_r1 = LaunchConfiguration('x_pose_r1', default='-4.0')
     y_pose_r1 = LaunchConfiguration('y_pose_r1', default='0.0')
     ns_r1 = LaunchConfiguration('ns_r1', default='robot1')
- 
-    x_pose_r2 = LaunchConfiguration('x_pose_r2', default='1.0')
-    y_pose_r2 = LaunchConfiguration('y_pose_r2', default='0.5')
+
+    x_pose_r2 = LaunchConfiguration('x_pose_r2', default='-4.0')
+    y_pose_r2 = LaunchConfiguration('y_pose_r2', default='-1.0')
     ns_r2 = LaunchConfiguration('ns_r2', default='robot2')
- 
-    x_pose_r3 = LaunchConfiguration('x_pose_r3', default='-2.0')
-    y_pose_r3 = LaunchConfiguration('y_pose_r3', default='-0.5')
+
+    x_pose_r3 = LaunchConfiguration('x_pose_r3', default='-4.0')
+    y_pose_r3 = LaunchConfiguration('y_pose_r3', default='-2.0')
     ns_r3 = LaunchConfiguration('ns_r3', default='robot3')
- 
+
     world = os.path.join(
         get_package_share_directory('turtlebot3_gazebo'),
         'worlds',
         'stanza.world'
-    )
- 
-    slam_r1 = os.path.join(
-        get_package_share_directory('multirobot_mapping'),
-        'params',
-        'slam_toolbox_robot1.yaml'
-    )
- 
-    slam_r2 = os.path.join(
-        get_package_share_directory('multirobot_mapping'),
-        'params',
-        'slam_toolbox_robot2.yaml'
-    )
-   
-    slam_r3 = os.path.join(
-        get_package_share_directory('multirobot_mapping'),
-        'params',
-        'slam_toolbox_robot3.yaml'
     )
  
     gazebo_cmd = IncludeLaunchDescription(
@@ -94,15 +77,29 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
     )
+
+    robot1_tf_static_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='robot1_tf_relay',
+        arguments=['/robot1/tf_static', '/tf_static'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
    
     robot1_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_robot1_odom',
-        arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/map']
+        arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/map'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        remappings=[('/tf_static', '/robot1/tf_static')]
     )
- 
-                                # ROBOT2    
+
+
+
+
+                                # ROBOT2
     robot2_spawn_cmd = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(launch_file_dir, 'spawn_tb3.launch.py')
@@ -110,10 +107,10 @@ def generate_launch_description():
             launch_arguments={
                 'x_pose': x_pose_r2,
                 'y_pose': y_pose_r2,
-                'namespace': ns_r2
+                'namespace': ns_r2 
             }.items()
         )
-
+    
     robot2_tf_relay = Node(
         package='topic_tools',
         executable='relay',
@@ -122,15 +119,30 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
     )
+
+    robot2_tf_static_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='robot2_tf_relay',
+        arguments=['/robot2/tf_static', '/tf_static'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
    
     robot2_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_robot2_odom',
-        arguments=[x_pose_r2, y_pose_r2, '0.01', '0.0', '0.0', '0.0', 'world', 'robot2/map']
+        arguments=[x_pose_r2, y_pose_r2, '0.01', '0.0', '0.0', '0.0', 'world', 'robot2/map'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        remappings=[('/tf_static', '/robot2/tf_static')]
     )
- 
-                                # ROBOT3    
+
+
+
+
+
+                                # ROBOT3
     robot3_spawn_cmd = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(launch_file_dir, 'spawn_tb3.launch.py')
@@ -150,15 +162,34 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
     )
+
+    robot3_tf_static_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='robot3_tf_relay',
+        arguments=['/robot3/tf_static', '/tf_static'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
    
     robot3_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='world_to_robot3_odom',
-        arguments=[x_pose_r3, y_pose_r3, '0.01', '0.0', '0.0', '0.0', 'world', 'robot3/map']
+        arguments=[x_pose_r3, y_pose_r3, '0.01', '0.0', '0.0', '0.0', 'world', 'robot3/map'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        remappings=[('/tf_static', '/robot3/tf_static')]
     )
- 
- 
+
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', rviz_config_path],
+        parameters=[{'use_sim_time': True}]
+    )
+
     ld = LaunchDescription()
  
     # Add the commands to the launch description
@@ -167,11 +198,15 @@ def generate_launch_description():
     ld.add_action(clock_bridge)
     ld.add_action(robot1_spawn_cmd)
     ld.add_action(robot1_tf_relay)
+    ld.add_action(robot1_tf_static_relay)
     ld.add_action(robot1_tf_publisher)
     ld.add_action(robot2_spawn_cmd)
     ld.add_action(robot2_tf_relay)
+    ld.add_action(robot2_tf_static_relay)
     ld.add_action(robot2_tf_publisher)
     ld.add_action(robot3_spawn_cmd)
     ld.add_action(robot3_tf_relay)
+    ld.add_action(robot3_tf_static_relay)
     ld.add_action(robot3_tf_publisher)
+    ld.add_action(rviz_node)
     return ld

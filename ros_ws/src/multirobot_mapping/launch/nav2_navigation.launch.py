@@ -85,9 +85,7 @@ def generate_launch_description():
             namespace=namespace,
             output='screen',
             parameters=[configured_params,sim_time_param],
-            remappings=remappings + [
-                ('goal_pose', '/goal_pose'),
-            ],
+            remappings=remappings,
         )
 
         waypoint_follower = Node(
