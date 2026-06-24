@@ -5,7 +5,8 @@ RUN apt update -y && apt install -y liburdfdom-tools
 RUN apt update -y && apt install -y ros-jazzy-ros-gz
 RUN apt update -y && apt install -y ros-jazzy-navigation2 \
                                     ros-jazzy-nav2-bringup
-RUN apt update -y && apt install -y ros-jazzy-slam-toolbox    
+RUN apt update -y && apt install -y ros-jazzy-slam-toolbox 
+RUN apt update -y && apt install -y ros-jazzy-topic-tools   
 
 ENV TURTLEBOT3_MODEL=waffle                            
 WORKDIR /root/ros_workspace

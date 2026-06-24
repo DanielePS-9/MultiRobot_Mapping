@@ -6,13 +6,11 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, GroupAction, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import PushRosNamespace
+from launch_ros.actions import PushRosNamespace, SetRemap
 from launch_ros.actions import Node
  
-# 1. Trova il percorso assoluto della cartella in cui si trova QUESTO file di launch
 current_dir = os.path.dirname(os.path.abspath(__file__))
  
-# 2. Aggiungi questa cartella alla lista dei percorsi di Python
 sys.path.append(current_dir)
 from utils import load_sdf_with_namespace, create_namespaced_bridge_yaml
  
@@ -23,6 +21,8 @@ def generate_launch_description():
     model_folder = 'turtlebot3_' + TURTLEBOT3_MODEL
    
     pkg_slam_toolbox = get_package_share_directory('slam_toolbox')
+
+    pkg_nav2_bringup = get_package_share_directory('nav2_bringup')
  
     sdf_path = os.path.join(
         get_package_share_directory('turtlebot3_gazebo'),
@@ -55,8 +55,7 @@ def generate_launch_description():
         'namespace', default_value='',
         description='Specify namespace of the robot')
  
- 
- 
+
     def spawn_rbt(context):
         namespace = context.launch_configurations['namespace']
         x_pose    = context.launch_configurations['x_pose']
@@ -71,6 +70,12 @@ def generate_launch_description():
             get_package_share_directory('multirobot_mapping'),
             'config',
             'slam_toolbox_' + f'{namespace}' + '.yaml'
+        )
+
+        nav2_params_file = os.path.join(
+            get_package_share_directory('multirobot_mapping'),
+            'config',
+            'nav2_params_' + f'{namespace}' + '.yaml'
         )
  
         gazebo_ros_spawner = Node(
@@ -88,6 +93,8 @@ def generate_launch_description():
  
         robot_state_publisher_slam = GroupAction([
             PushRosNamespace(namespace),
+            SetRemap(src='/tf', dst='tf'),
+            SetRemap(src='/tf_static', dst='tf_static'),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(get_package_share_directory('multirobot_mapping'), 'launch', 'publisher_tb3.launch.py')
@@ -95,7 +102,7 @@ def generate_launch_description():
                 launch_arguments={
                     'use_sim_time': 'true',
                     'frame_prefix': namespace
-                }.items()
+                }.items(),
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -107,7 +114,20 @@ def generate_launch_description():
                 }.items(),
             ),
         ])
-       
+
+        # nav2_cmd = IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(
+        #         os.path.join(pkg_nav2_bringup, 'launch', 'navigation_launch.py')
+        #     ),
+        #     launch_arguments={
+        #         'namespace': namespace,
+        #         'use_sim_time': use_sim_time_val,
+        #         'params_file': nav2_params_file, 
+        #         'autostart': 'true',
+        #         'use_composition': 'False',
+        #     }.items(),
+        # )
+
         gazebo_ros_bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',

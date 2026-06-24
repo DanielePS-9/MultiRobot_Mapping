@@ -36,8 +36,10 @@ def create_namespaced_bridge_yaml(base_yaml_path, namespace):
     for bridge in bridges:
         if bridge['ros_topic_name'] == 'clock' or bridge['gz_topic_name'] == 'clock':
             continue
-        if bridge['ros_topic_name'] not in ['tf','tf_static']:
-            bridge['ros_topic_name'] = f"{namespace_with_slash}{bridge['ros_topic_name']}"
+            
+        # MODIFICA: Applica il namespace a tutti i topic ROS, inclusi tf e tf_static
+        bridge['ros_topic_name'] = f"{namespace_with_slash}{bridge['ros_topic_name']}"
+        
         if bridge['gz_topic_name'] not in ['clock']:
             bridge['gz_topic_name'] = f"{namespace_with_slash}{bridge['gz_topic_name']}"
         namespaced_bridges.append(bridge)
@@ -70,6 +72,7 @@ def load_sdf_with_namespace(model_path, namespace):
 
     topic_map = {
         '<tf_topic>/tf</tf_topic>': f'<tf_topic>{namespace}/tf</tf_topic>',
+        '<tf_static_topic>/tf_static</tf_static_topic>': f'<tf_static_topic>{namespace}/tf_static</tf_static_topic>',
         '<topic>cmd_vel</topic>': f'<topic>{namespace}/cmd_vel</topic>',
         '<odom_topic>odom</odom_topic>': f'<odom_topic>{namespace}/odom</odom_topic>',
         '<topic>joint_states</topic>': f'<topic>{namespace}/joint_states</topic>',

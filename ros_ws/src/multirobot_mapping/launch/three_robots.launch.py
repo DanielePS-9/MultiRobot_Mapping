@@ -85,6 +85,15 @@ def generate_launch_description():
                 'namespace': ns_r1
             }.items()
         )
+    
+    robot1_tf_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='robot1_tf_relay',
+        arguments=['/robot1/tf', '/tf'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
    
     robot1_tf_publisher = Node(
         package='tf2_ros',
@@ -92,8 +101,6 @@ def generate_launch_description():
         name='world_to_robot1_odom',
         arguments=[x_pose_r1, y_pose_r1, '0.01', '0.0', '0.0', '0.0', 'world', 'robot1/map']
     )
- 
-   
  
                                 # ROBOT2    
     robot2_spawn_cmd = IncludeLaunchDescription(
@@ -106,6 +113,15 @@ def generate_launch_description():
                 'namespace': ns_r2
             }.items()
         )
+
+    robot2_tf_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='robot2_tf_relay',
+        arguments=['/robot2/tf', '/tf'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
    
     robot2_tf_publisher = Node(
         package='tf2_ros',
@@ -114,7 +130,6 @@ def generate_launch_description():
         arguments=[x_pose_r2, y_pose_r2, '0.01', '0.0', '0.0', '0.0', 'world', 'robot2/map']
     )
  
-   
                                 # ROBOT3    
     robot3_spawn_cmd = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -126,6 +141,15 @@ def generate_launch_description():
                 'namespace': ns_r3
             }.items()
         )
+    
+    robot3_tf_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='robot3_tf_relay',
+        arguments=['/robot3/tf', '/tf'],
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
    
     robot3_tf_publisher = Node(
         package='tf2_ros',
@@ -142,9 +166,12 @@ def generate_launch_description():
     ld.add_action(gazebo_cmd)
     ld.add_action(clock_bridge)
     ld.add_action(robot1_spawn_cmd)
+    ld.add_action(robot1_tf_relay)
     ld.add_action(robot1_tf_publisher)
     ld.add_action(robot2_spawn_cmd)
+    ld.add_action(robot2_tf_relay)
     ld.add_action(robot2_tf_publisher)
     ld.add_action(robot3_spawn_cmd)
+    ld.add_action(robot3_tf_relay)
     ld.add_action(robot3_tf_publisher)
     return ld
