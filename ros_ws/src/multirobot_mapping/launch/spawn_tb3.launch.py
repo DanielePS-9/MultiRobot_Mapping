@@ -115,18 +115,21 @@ def generate_launch_description():
             ),
         ])
 
-        # nav2_cmd = IncludeLaunchDescription(
-        #     PythonLaunchDescriptionSource(
-        #         os.path.join(pkg_nav2_bringup, 'launch', 'navigation_launch.py')
-        #     ),
-        #     launch_arguments={
-        #         'namespace': namespace,
-        #         'use_sim_time': use_sim_time_val,
-        #         'params_file': nav2_params_file, 
-        #         'autostart': 'true',
-        #         'use_composition': 'False',
-        #     }.items(),
-        # )
+        nav2_group = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    get_package_share_directory('multirobot_mapping'),
+                    'launch',
+                    'nav2_navigation.launch.py'
+                )
+            ),
+            launch_arguments={
+                'namespace': namespace,
+                'use_sim_time': use_sim_time_val,
+                'params_file': nav2_params_file,
+                'autostart': 'true',
+            }.items(),
+        )
 
         gazebo_ros_bridge = Node(
             package='ros_gz_bridge',
@@ -136,10 +139,13 @@ def generate_launch_description():
                 '-p',
                 f'config_file:={ns_yaml}',
             ],
+            parameters=[{
+                'use_sim_time': True
+            }],
             output='screen',
         )
  
-        return [gazebo_ros_spawner, gazebo_ros_bridge, robot_state_publisher_slam]
+        return [gazebo_ros_spawner, gazebo_ros_bridge, robot_state_publisher_slam, nav2_group]
  
     ld = LaunchDescription()
  
