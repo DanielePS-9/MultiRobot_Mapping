@@ -3,7 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import AppendEnvironmentVariable
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
  
@@ -96,6 +96,15 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot1/tf_static')]
     )
 
+    robot1_random_goal = Node(
+        package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
+        executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
+        name='random_goal_selector',
+        namespace=ns_r1,
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
+
 
 
 
@@ -136,6 +145,15 @@ def generate_launch_description():
         arguments=[x_pose_r2, y_pose_r2, '0.01', '0.0', '0.0', '0.0', 'world', 'robot2/map'],
         parameters=[{'use_sim_time': use_sim_time}],
         remappings=[('/tf_static', '/robot2/tf_static')]
+    )
+
+    robot2_random_goal = Node(
+        package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
+        executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
+        name='random_goal_selector',
+        namespace=ns_r2,
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
     )
 
 
@@ -181,6 +199,15 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot3/tf_static')]
     )
 
+    robot3_random_goal = Node(
+        package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
+        executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
+        name='random_goal_selector',
+        namespace=ns_r3,
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
+
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -190,23 +217,67 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
+    map_merge_node = Node(
+        package='multirobot_mapping',
+        executable='map_merger',  
+        name='custom_map_merger',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'r1_x': x_pose_r1,
+            'r1_y': y_pose_r1,
+            'r2_x': x_pose_r2,
+            'r2_y': y_pose_r2,
+            'r3_x': x_pose_r3,
+            'r3_y': y_pose_r3,
+        }]
+    )
+ 
+
     ld = LaunchDescription()
  
-    # Add the commands to the launch description
+    # # Add the commands to the launch description
+    # ld.add_action(set_env_vars_resources)
+    # ld.add_action(gazebo_cmd)
+    # ld.add_action(clock_bridge)
+    # ld.add_action(robot1_spawn_cmd)
+    # ld.add_action(robot1_tf_relay)
+    # ld.add_action(robot1_tf_static_relay)
+    # ld.add_action(robot1_tf_publisher)
+    # ld.add_action(robot2_spawn_cmd)
+    # ld.add_action(robot2_tf_relay)
+    # ld.add_action(robot2_tf_static_relay)
+    # ld.add_action(robot2_tf_publisher)
+    # ld.add_action(robot3_spawn_cmd)
+    # ld.add_action(robot3_tf_relay)
+    # ld.add_action(robot3_tf_static_relay)
+    # ld.add_action(robot3_tf_publisher)
+    # ld.add_action(rviz_node)
+    # return ld
+
     ld.add_action(set_env_vars_resources)
     ld.add_action(gazebo_cmd)
     ld.add_action(clock_bridge)
-    ld.add_action(robot1_spawn_cmd)
-    ld.add_action(robot1_tf_relay)
-    ld.add_action(robot1_tf_static_relay)
-    ld.add_action(robot1_tf_publisher)
-    ld.add_action(robot2_spawn_cmd)
-    ld.add_action(robot2_tf_relay)
-    ld.add_action(robot2_tf_static_relay)
-    ld.add_action(robot2_tf_publisher)
-    ld.add_action(robot3_spawn_cmd)
-    ld.add_action(robot3_tf_relay)
-    ld.add_action(robot3_tf_static_relay)
-    ld.add_action(robot3_tf_publisher)
-    ld.add_action(rviz_node)
+   
+    # Fase 2: Aspetta 5 secondi che Gazebo si carichi, poi spawna TUTTI i robot insieme
+    robots_spawn_delay = TimerAction(
+        period=5.0,
+        actions=[
+            robot1_spawn_cmd, robot1_tf_relay, robot1_tf_static_relay, robot1_tf_publisher, robot1_random_goal,
+            robot2_spawn_cmd, robot2_tf_relay, robot2_tf_static_relay, robot2_tf_publisher, robot2_random_goal,
+            robot3_spawn_cmd, robot3_tf_relay, robot3_tf_static_relay, robot3_tf_publisher, robot3_random_goal,
+        ]
+    )
+    ld.add_action(robots_spawn_delay)
+   
+    # Fase 3: Aspetta 10 secondi dall'avvio iniziale, poi avvia il Map Merger e RViz
+    tools_delay = TimerAction(
+        period=10.0,
+        actions=[
+            map_merge_node,
+            rviz_node
+        ]
+    )
+    ld.add_action(tools_delay)
+   
     return ld

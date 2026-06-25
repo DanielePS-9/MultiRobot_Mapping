@@ -27,12 +27,6 @@ def generate_launch_description():
         'stanza.world'
     )
  
-    slam_r1 = os.path.join(
-        get_package_share_directory('multirobot_mapping'),
-        'params',
-        'slam_toolbox_robot1.yaml'
-    )
- 
     gazebo_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(ros_gz_sim, 'launch', 'gz_sim.launch.py')
