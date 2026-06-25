@@ -1,4 +1,6 @@
-import rclpy
+# COMMENTO INUTILE
+
+import rclpy            
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.action.client import GoalStatus
