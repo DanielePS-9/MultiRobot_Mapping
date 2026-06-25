@@ -93,6 +93,15 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot1/tf_static')]
     )
 
+    robot1_random_goal = Node(
+        package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
+        executable='goal_sel', # Sostituisci con l'entry point registrato nel setup.py
+        name='random_goal_selector',
+        namespace=ns_r1,
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
+
     ld = LaunchDescription()
  
     # Add the commands to the launch description
@@ -103,4 +112,5 @@ def generate_launch_description():
     ld.add_action(robot1_tf_relay)
     ld.add_action(robot1_tf_static_relay)
     ld.add_action(robot1_tf_publisher)
+    ld.add_action(robot1_random_goal)
     return ld
