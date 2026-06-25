@@ -96,7 +96,7 @@ def generate_launch_description():
 
     robot1_random_goal = Node(
         package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
-        executable='goal_sel', # Sostituisci con l'entry point registrato nel setup.py
+        executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
         name='random_goal_selector',
         namespace=ns_r1,
         output='screen',

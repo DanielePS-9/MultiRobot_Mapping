@@ -57,12 +57,15 @@ class RandomGoalSelector(Node):
         origin_x = self.costmap.info.origin.position.x
         origin_y = self.costmap.info.origin.position.y
 
-        max_attempts = 100
+        max_attempts = 200
         valid_goal_found = False
         target_x = 0.0
         target_y = 0.0
 
-        # Tenta di trovare un punto libero
+        # Raggio (in celle) per cercare spazio noto attorno al punto inesplorato (es. 6 celle = 30cm)
+        search_radius = 6 
+
+        # Tenta di trovare un punto inesplorato sul bordo dell'area nota
         for _ in range(max_attempts):
             grid_x = random.randint(0, width - 1)
             grid_y = random.randint(0, height - 1)
@@ -70,12 +73,35 @@ class RandomGoalSelector(Node):
             index = grid_x + grid_y * width
             cost = self.costmap.data[index]
 
-            # Accettiamo solo celle con costo molto basso (libere e lontane dai muri)
-            if 0 <= cost < 80:
-                target_x = origin_x + (grid_x * resolution)
-                target_y = origin_y + (grid_y * resolution)
-                valid_goal_found = True
-                break
+            # 1. Vogliamo specificamente una cella INESPLORATA (-1)
+            if cost == -1:
+                # 2. Controlliamo che ci sia almeno una cella libera e sicura nelle vicinanze.
+                # Questo garantisce che il punto sia "attaccato" al rettangolo esplorato e non sperduto nel nulla.
+                free_space_nearby = False
+                
+                min_x = max(0, grid_x - search_radius)
+                max_x = min(width - 1, grid_x + search_radius)
+                min_y = max(0, grid_y - search_radius)
+                max_y = min(height - 1, grid_y + search_radius)
+
+                for nx in range(min_x, max_x + 1):
+                    for ny in range(min_y, max_y + 1):
+                        n_index = nx + ny * width
+                        n_cost = self.costmap.data[n_index]
+                        
+                        # Trovato spazio libero (0-19) vicino all'inesplorato
+                        if 0 <= n_cost < 20: 
+                            free_space_nearby = True
+                            break
+                    if free_space_nearby:
+                        break
+                
+                # Se è inesplorato E connesso allo spazio noto, l'abbiamo trovato!
+                if free_space_nearby:
+                    target_x = origin_x + (grid_x * resolution)
+                    target_y = origin_y + (grid_y * resolution)
+                    valid_goal_found = True
+                    break
 
         if valid_goal_found:
             # Attendiamo che il server di navigazione sia pronto
@@ -103,13 +129,13 @@ class RandomGoalSelector(Node):
             goal_msg.pose.pose.orientation.z = q[2]
             goal_msg.pose.pose.orientation.w = q[3]
 
-            self.get_logger().info(f"Invio target stocastico: X={target_x:.2f}, Y={target_y:.2f} (Attendo l'esito...)")
+            self.get_logger().info(f"Target INESPLORATO trovato: X={target_x:.2f}, Y={target_y:.2f} (Attendo l'esito...)")
             
             # Invia il goal in modo asincrono
             self._send_goal_future = self.action_client.send_goal_async(goal_msg)
             self._send_goal_future.add_done_callback(self.goal_response_callback)
         else:
-            self.get_logger().warn("Spazio libero non trovato. Ritento a breve...")
+            self.get_logger().warn("Nessun confine inesplorato trovato. Ritento a breve...")
             self.schedule_next_goal(2.0)
 
     def goal_response_callback(self, future):

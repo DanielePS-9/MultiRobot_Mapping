@@ -30,6 +30,7 @@ setup(
     entry_points={
         'console_scripts': [
             'goal_sel = multirobot_mapping.random_goal_selector:main',
+            'goal_sel2 = multirobot_mapping.random_goal_selector2:main',
         ],
     },
 )
