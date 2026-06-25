@@ -13,7 +13,8 @@ from launch_ros.actions import Node
 def generate_launch_description():
     launch_file_dir = os.path.join(get_package_share_directory('multirobot_mapping'), 'launch')
     ros_gz_sim = get_package_share_directory('ros_gz_sim')
- 
+    rviz_config_path = os.path.join(get_package_share_directory('multirobot_mapping'), 'rviz', 'singlerobot_view.rviz')
+
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
  
     x_pose_r1 = LaunchConfiguration('x_pose_r1', default='2.0')
@@ -102,6 +103,15 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}]
     )
 
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', rviz_config_path],
+        parameters=[{'use_sim_time': True}]
+    )
+
     ld = LaunchDescription()
  
     # Add the commands to the launch description
@@ -113,4 +123,5 @@ def generate_launch_description():
     ld.add_action(robot1_tf_static_relay)
     ld.add_action(robot1_tf_publisher)
     ld.add_action(robot1_random_goal)
+    ld.add_action(rviz_node)
     return ld

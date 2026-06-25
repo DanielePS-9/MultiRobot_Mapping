@@ -71,7 +71,7 @@ class RandomGoalSelector(Node):
             cost = self.costmap.data[index]
 
             # Accettiamo solo celle con costo molto basso (libere e lontane dai muri)
-            if 0 <= cost < 20:
+            if 0 <= cost < 80:
                 target_x = origin_x + (grid_x * resolution)
                 target_y = origin_y + (grid_y * resolution)
                 valid_goal_found = True
