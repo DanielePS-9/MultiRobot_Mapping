@@ -63,7 +63,7 @@ class RandomGoalSelector(Node):
         target_y = 0.0
 
         # Raggio (in celle) per cercare spazio noto attorno al punto inesplorato (es. 6 celle = 30cm)
-        search_radius = 6 
+        search_radius = 2 
 
         # Tenta di trovare un punto inesplorato sul bordo dell'area nota
         for _ in range(max_attempts):

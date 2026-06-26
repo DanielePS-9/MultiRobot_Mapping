@@ -81,7 +81,7 @@ def generate_launch_description():
     robot1_tf_static_relay = Node(
         package='topic_tools',
         executable='relay',
-        name='robot1_tf_relay',
+        name='robot1_tf_static_relay',
         arguments=['/robot1/tf_static', '/tf_static'],
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
@@ -96,14 +96,14 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot1/tf_static')]
     )
 
-    robot1_random_goal = Node(
-        package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
-        executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
-        name='random_goal_selector',
-        namespace=ns_r1,
-        output='screen',
-        parameters=[{'use_sim_time': use_sim_time}]
-    )
+    # robot1_random_goal = Node(
+    #     package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
+    #     executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
+    #     name='random_goal_selector',
+    #     namespace=ns_r1,
+    #     output='screen',
+    #     parameters=[{'use_sim_time': use_sim_time}]
+    # )
 
 
 
@@ -132,7 +132,7 @@ def generate_launch_description():
     robot2_tf_static_relay = Node(
         package='topic_tools',
         executable='relay',
-        name='robot2_tf_relay',
+        name='robot2_tf_static_relay',
         arguments=['/robot2/tf_static', '/tf_static'],
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
@@ -147,14 +147,14 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot2/tf_static')]
     )
 
-    robot2_random_goal = Node(
-        package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
-        executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
-        name='random_goal_selector',
-        namespace=ns_r2,
-        output='screen',
-        parameters=[{'use_sim_time': use_sim_time}]
-    )
+    # robot2_random_goal = Node(
+    #     package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
+    #     executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
+    #     name='random_goal_selector',
+    #     namespace=ns_r2,
+    #     output='screen',
+    #     parameters=[{'use_sim_time': use_sim_time}]
+    # )
 
 
 
@@ -184,7 +184,7 @@ def generate_launch_description():
     robot3_tf_static_relay = Node(
         package='topic_tools',
         executable='relay',
-        name='robot3_tf_relay',
+        name='robot3_tf_static_relay',
         arguments=['/robot3/tf_static', '/tf_static'],
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
@@ -199,14 +199,14 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot3/tf_static')]
     )
 
-    robot3_random_goal = Node(
-        package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
-        executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
-        name='random_goal_selector',
-        namespace=ns_r3,
-        output='screen',
-        parameters=[{'use_sim_time': use_sim_time}]
-    )
+    # robot3_random_goal = Node(
+    #     package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
+    #     executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
+    #     name='random_goal_selector',
+    #     namespace=ns_r3,
+    #     output='screen',
+    #     parameters=[{'use_sim_time': use_sim_time}]
+    # )
 
     rviz_node = Node(
         package='rviz2',
@@ -231,6 +231,14 @@ def generate_launch_description():
             'r3_x': x_pose_r3,
             'r3_y': y_pose_r3,
         }]
+    )
+
+    swarm_explorer_node = Node(
+        package='multirobot_mapping', 
+        executable='swarm_ex', 
+        name='swarm_explorer',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
     )
  
 
@@ -263,9 +271,9 @@ def generate_launch_description():
     robots_spawn_delay = TimerAction(
         period=5.0,
         actions=[
-            robot1_spawn_cmd, robot1_tf_relay, robot1_tf_static_relay, robot1_tf_publisher, robot1_random_goal,
-            robot2_spawn_cmd, robot2_tf_relay, robot2_tf_static_relay, robot2_tf_publisher, robot2_random_goal,
-            robot3_spawn_cmd, robot3_tf_relay, robot3_tf_static_relay, robot3_tf_publisher, robot3_random_goal,
+            robot1_spawn_cmd, robot1_tf_relay, robot1_tf_static_relay, robot1_tf_publisher, #robot1_random_goal,
+            robot2_spawn_cmd, robot2_tf_relay, robot2_tf_static_relay, robot2_tf_publisher, #robot2_random_goal,
+            robot3_spawn_cmd, robot3_tf_relay, robot3_tf_static_relay, robot3_tf_publisher, #robot3_random_goal,
         ]
     )
     ld.add_action(robots_spawn_delay)
@@ -279,5 +287,14 @@ def generate_launch_description():
         ]
     )
     ld.add_action(tools_delay)
+
+    swm_delay = TimerAction(
+        period=25.0,
+        actions=[
+            swarm_explorer_node
+        ]
+    )
    
+    ld.add_action(swm_delay)
+
     return ld
