@@ -40,7 +40,7 @@ controller_server:
       plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 30 #56
       model_dt: 0.05
-      batch_size: 500 #2000
+      batch_size: 1000
       ax_max: 3.0
       ax_min: -3.0
       ay_max: 3.0
@@ -49,8 +49,10 @@ controller_server:
       vx_std: 0.2
       vy_std: 0.2
       wz_std: 0.4
-      vx_max: 0.5
-      vx_min: -0.35
+      vx_max: 0.25 #0.5
+      vx_min: -0.15 #-0.35
+      vtheta_max: 0.50
+      vtheta_min: -0.50
       vy_max: 0.5
       wz_max: 1.9
       iteration_count: 1
@@ -136,8 +138,8 @@ local_costmap:
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.70
+        cost_scaling_factor: 5.0 #3.0
+        inflation_radius: 0.55 #0.70
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -192,8 +194,8 @@ global_costmap:
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.7
+        cost_scaling_factor: 8.0 #3.0
+        inflation_radius: 0.65 #0.7
       always_send_full_costmap: True
 
 planner_server:
@@ -217,8 +219,11 @@ behavior_server:
     behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
     spin:
       plugin: "nav2_behaviors::Spin"
+      max_rotational_vel: 0.4    # Fai girare il robot lentamente durante il recovery
+      min_rotational_vel: 0.2
     backup:
       plugin: "nav2_behaviors::BackUp"
+      speed: 0.15
     drive_on_heading:
       plugin: "nav2_behaviors::DriveOnHeading"
     wait:
@@ -228,9 +233,9 @@ behavior_server:
     robot_base_frame: robot1/base_footprint
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
-    min_rotational_vel: 0.4
-    rotational_acc_lim: 3.2
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 1.0
 
 waypoint_follower:
   ros__parameters:
@@ -246,10 +251,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.5, 0.0, 1.0]
-    min_velocity: [-0.5, 0.0, -1.0]
-    max_accel: [2.5, 0.0, 3.2]
-    max_decel: [-2.5, 0.0, -3.2]
+    max_velocity: [0.26, 0.0, 0.5] 
+    min_velocity: [-0.15, 0.0, -0.5]
+    max_accel: [0.5, 0.0, 1.0] 
+    max_decel: [-0.5, 0.0, -1.0]
     odom_topic: "odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]

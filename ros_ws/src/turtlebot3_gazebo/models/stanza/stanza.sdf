@@ -7,7 +7,7 @@
       <collision name="collision">
         <geometry>
           <mesh>
-            <uri>model://stanza/meshes/stanza.obj</uri>
+            <uri>model://stanza/meshes/stanza_v2.obj</uri>
           </mesh>
         </geometry>
       </collision>
@@ -15,7 +15,7 @@
       <visual name="visual">
         <geometry>
           <mesh>
-            <uri>model://stanza/meshes/stanza.obj</uri>
+            <uri>model://stanza/meshes/stanza_v2.obj</uri>
           </mesh>
         </geometry>
         <material>

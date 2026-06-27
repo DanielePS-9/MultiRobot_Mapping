@@ -3,11 +3,14 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
- 
+
+# --- NUOVE IMPORTAZIONI PER IL QoS ---
+from rclpy.qos import QoSProfile, DurabilityPolicy
+
 class CustomMapMerger(Node):
     def __init__(self):
         super().__init__('custom_map_merger')
-       
+        
         # Dichiarazione parametri
         self.declare_parameter('r1_x', -4.0)
         self.declare_parameter('r1_y', 0.0)
@@ -30,11 +33,18 @@ class CustomMapMerger(Node):
         self.create_subscription(OccupancyGrid, '/robot2/map', lambda msg: self.map_callback(msg, 'robot2'), 10)
         self.create_subscription(OccupancyGrid, '/robot3/map', lambda msg: self.map_callback(msg, 'robot3'), 10)
  
-        self.merged_map_pub = self.create_publisher(OccupancyGrid, '/map', 10)
-       
+        # --- CREAZIONE DEL PROFILO QoS TRANSIENT LOCAL ---
+        map_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL
+        )
+        
+        # Sostituzione della coda '10' con il nuovo profilo 'map_qos'
+        self.merged_map_pub = self.create_publisher(OccupancyGrid, '/map', map_qos)
+        
         # Timer per la fusione (1 volta al secondo)
         self.create_timer(1.0, self.merge_and_publish)
-        self.get_logger().info("Custom Dynamic Map Merger avviato!")
+        self.get_logger().info("Custom Dynamic Map Merger avviato con QoS Transient Local!")
  
     def map_callback(self, msg, robot_name):
         self.local_maps[robot_name] = msg
@@ -44,7 +54,7 @@ class CustomMapMerger(Node):
             return
  
         resolution = 0.05  # Risoluzione della mappa globale
-       
+        
         # Liste per accumulare tutti i punti validi scoperti nel mondo
         all_x_world = []
         all_y_world = []
@@ -54,14 +64,14 @@ class CustomMapMerger(Node):
         for r_name, l_map in self.local_maps.items():
             if l_map is None:
                 continue
-           
+            
             spawn_x, spawn_y = self.poses[r_name]
             l_res = l_map.info.resolution
             l_w = l_map.info.width
             l_h = l_map.info.height
             l_orig_x = l_map.info.origin.position.x
             l_orig_y = l_map.info.origin.position.y
-           
+            
             local_grid = np.array(l_map.data, dtype=np.int8).reshape((l_h, l_w))
  
             # Trova gli indici delle celle note (esclude il -1 che è l'inesplorato locale)
@@ -96,7 +106,7 @@ class CustomMapMerger(Node):
         # L'origine diventa il punto minimo assoluto esplorato
         g_origin_x = float(np.min(all_x))
         g_origin_y = float(np.min(all_y))
-       
+        
         # Convertiamo temporaneamente le coordinate in indici pixel grezzi per trovare il massimo
         g_i_raw = ((all_x - g_origin_x) / resolution).astype(int)
         g_j_raw = ((all_y - g_origin_y) / resolution).astype(int)
@@ -109,13 +119,15 @@ class CustomMapMerger(Node):
         # Creiamo una griglia dimensionata al millimetro, inizializzata a -1 (inesplorato)
         global_grid = np.full((g_height, g_width), -1, dtype=np.int8)
  
-        # Scriviamo i dati: prima lo spazio libero (0), poi gli ostacoli (100) per dargli priorità
-        free_mask = (all_v == 0)
-        global_grid[g_j_raw[free_mask], g_i_raw[free_mask]] = 0
-       
+        # Scriviamo PRIMA gli ostacoli (100)...
         obs_mask = (all_v == 100)
         global_grid[g_j_raw[obs_mask], g_i_raw[obs_mask]] = 100
- 
+        
+        # ...e DOPO lo spazio libero (0). In questo modo, se un robot passa dove prima c'era
+        # una scia/fantasma lasciata da un altro robot, lo spazio libero la CANCELLERÀ.
+        free_mask = (all_v == 0)
+        global_grid[g_j_raw[free_mask], g_i_raw[free_mask]] = 0
+
         # --- FASE 4: PUBBLICAZIONE MESSAGGIO ---
         merged_msg = OccupancyGrid()
         merged_msg.header.stamp = self.get_clock().now().to_msg()
@@ -125,7 +137,7 @@ class CustomMapMerger(Node):
         merged_msg.info.height = g_height
         merged_msg.info.origin.position.x = g_origin_x
         merged_msg.info.origin.position.y = g_origin_y
-       
+        
         merged_msg.data = global_grid.flatten().tolist()
         self.merged_map_pub.publish(merged_msg)
  
