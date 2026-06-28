@@ -34,6 +34,7 @@ class MultiRobotExplorer(Node):
         self.merged_map = None
         self.robots = ['robot1', 'robot2', 'robot3']
         self.initial_trigger_done = False # Sostituisce il timer per il primissimo avvio
+        self.start_time = None
         
         # Definiamo gli offset di spawn esatti per aggirare il bug dei relay sui tf_static
         self.spawn_offsets = {
@@ -88,11 +89,21 @@ class MultiRobotExplorer(Node):
         """Aggiorna la mappa e innesca la primissima assegnazione all'avvio."""
         self.merged_map = msg
         
-        # Innesco iniziale: appena abbiamo la mappa, scateniamo l'orchestratore per farli partire
+        # Innesco iniziale: appena abbiamo la mappa, scateniamo l'orchestratore
         if not self.initial_trigger_done:
-            self.initial_trigger_done = True
-            self.get_logger().info("Prima mappa fusa ricevuta! Inizio l'assegnazione dei target...")
-            self.orchestrator_loop()
+            # Controlliamo preventivamente se l'albero TF globale è completamente assemblato
+            # (basta verificare che il primo robot sia raggiungibile dal 'world')
+            if self.tf_buffer.can_transform('world', f'{self.robots[0]}/base_footprint', rclpy.time.Time()):
+                self.initial_trigger_done = True
+                self.start_time = self.get_clock().now()
+                self.get_logger().info("Prima mappa fusa ricevuta e albero TF pronto! Inizio l'assegnazione dei target...")
+                self.orchestrator_loop()
+            else:
+                # Usiamo un throttle_duration_sec per non intasare il terminale mentre aspetta
+                self.get_logger().info(
+                    "Mappa ricevuta, ma l'albero TF non è ancora completamente connesso. Attendo...", 
+                    throttle_duration_sec=2.0
+                )
 
     def get_quaternion_from_euler(self, roll, pitch, yaw):
         qx = math.sin(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) - math.cos(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
@@ -130,7 +141,7 @@ class MultiRobotExplorer(Node):
             return None, None
 
     def orchestrator_loop(self):
-        """Il cuore del sistema: si attiva SOLO su richiesta o tramite Watchdog."""
+        """Calcola i goal per tutti i robot liberi e li invia in blocco (simultaneamente)."""
         if self.merged_map is None:
             return
 
@@ -138,22 +149,24 @@ class MultiRobotExplorer(Node):
         if not idle_robots:
             return 
 
-        max_orchestrator_attempts = 50
+        # Aumentiamo i tentativi per dare tempo di trovare un goal per ogni robot
+        max_orchestrator_attempts = 150 
         attempts = 0
+        
+        # Lista temporanea per accumulare i comandi prima di inviarli
+        ready_to_dispatch = []
 
         while idle_robots and attempts < max_orchestrator_attempts:
             attempts += 1
             goal_x, goal_y = self.find_collaborative_frontier()
             
             if goal_x is None or goal_y is None:
-                self.get_logger().warn("Nessuna nuova frontiera trovata in questo momento.")
-                break 
+                continue 
 
             closest_robot = None
             min_dist = float('inf')
 
-            # TORNATO ALLA LOGICA ORIGINALE: Valutiamo la distanza di TUTTI i robot
-            # per mantenere i territori separati ed evitare attraversamenti della mappa.
+            # Logica Swarm territoriale: Valutiamo le distanze di TUTTI i robot
             for robot in self.robots:
                 rx, ry = self.get_robot_pose(robot)
                 if rx is not None and ry is not None:
@@ -165,14 +178,33 @@ class MultiRobotExplorer(Node):
             if closest_robot is None:
                 continue
 
-            # Se il robot più vicino alla frontiera è libero, ci va lui.
-            # Se è già occupato, IGNORIAMO questa frontiera e passiamo alla prossima,
-            # così i robot lontani non invaderanno la zona di competenza degli altri!
+            # Se il robot più vicino è libero e fa parte di quelli in attesa di un goal
             if self.robot_status[closest_robot] == 'IDLE' and closest_robot in idle_robots:
-                self.dispatch_robot(closest_robot, goal_x, goal_y)
-                idle_robots.remove(closest_robot) 
+                # Lo rimuoviamo dalla lista di quelli che necessitano di un goal
+                idle_robots.remove(closest_robot)
+                
+                # --- PASSAGGIO FONDAMENTALE ---
+                # Lo assegniamo "virtualmente" sùbito per far sì che la funzione 
+                # find_collaborative_frontier nel prossimo giro di ciclo sappia che 
+                # questa zona è occupata e non dia un goal sovrapposto a un altro robot!
+                self.assigned_goals[closest_robot] = (goal_x, goal_y)
+                
+                # Mettiamo il comando nella rampa di lancio
+                ready_to_dispatch.append((closest_robot, goal_x, goal_y))
             else:
+                # Il più vicino è già occupato, la frontiera viene ignorata
                 continue
+                
+        # ==========================================
+        # FASE DI LANCIO SIMULTANEO
+        # ==========================================
+        if ready_to_dispatch:
+            self.get_logger().info(f"🚀 Calcolo completato! Invio simultaneo di {len(ready_to_dispatch)} goal...")
+            # Ora che i conti sono finiti, premiamo il grilletto per tutti nello stesso momento!
+            for robot_name, gx, gy in ready_to_dispatch:
+                self.dispatch_robot(robot_name, gx, gy)
+        elif not ready_to_dispatch and attempts >= max_orchestrator_attempts:
+            self.get_logger().warn("Nessuna nuova frontiera trovata in questo momento.")
 
     def find_collaborative_frontier(self):
         """Trova un punto inesplorato (-1) adiacente a spazio libero (bianco) e LONTANO da ostacoli."""
@@ -184,7 +216,7 @@ class MultiRobotExplorer(Node):
 
         max_attempts = 1000  # Aumentato leggermente visto il filtro più severo
         search_radius = 2   # Raggio per cercare spazio libero
-        obstacle_radius = 8 # Raggio di sicurezza dagli ostacoli (evita punti neri)
+        obstacle_radius = 6 # Raggio di sicurezza dagli ostacoli (evita punti neri)
 
         active_targets = [pos for pos in self.assigned_goals.values() if pos is not None]
 
@@ -380,6 +412,20 @@ class MultiRobotExplorer(Node):
 
     def terminate_exploration(self):
         """Salva la mappa fusa tramite processo di sistema e spegne il nodo."""
+        if self.start_time is not None:
+            end_time = self.get_clock().now()
+            # La differenza genera un oggetto Duration
+            elapsed_duration = end_time - self.start_time 
+            
+            # Convertiamo i nanosecondi in secondi
+            elapsed_secs = elapsed_duration.nanoseconds / 1e9
+            mins = int(elapsed_secs // 60)
+            secs = int(elapsed_secs % 60)
+            
+            self.get_logger().info("=====================================================")
+            self.get_logger().info(f"⏱️ TEMPO TOTALE DI ESPLORAZIONE: {mins} min e {secs} sec ({elapsed_secs:.2f} s)")
+            self.get_logger().info("=====================================================")
+
         self.get_logger().info("✅ ESPLORAZIONE COMPLETATA! Tutte le aree accessibili sono state mappate.")
         self.get_logger().info("💾 Avvio il salvataggio automatico della mappa fusa...")
         
@@ -389,7 +435,9 @@ class MultiRobotExplorer(Node):
                 [
                     "ros2", "run", "nav2_map_server", "map_saver_cli", 
                     "-f", "mappa_sciame_completata", 
-                    "--ros-args", "-p", "use_sim_time:=true"
+                    "--ros-args", 
+                    "-p", "use_sim_time:=true",
+                    "-p", "map_subscribe_transient_local:=true"
                 ],
                 check=True
             )
