@@ -233,10 +233,10 @@ def generate_launch_description():
         }]
     )
 
-    swarm_explorer_node = Node(
+    market_explorer_node = Node(
         package='multirobot_mapping', 
-        executable='swarm_ex', 
-        name='swarm_explorer',
+        executable='market_ex', 
+        name='market_explorer',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}]
     )
@@ -288,13 +288,13 @@ def generate_launch_description():
     )
     ld.add_action(tools_delay)
 
-    swm_delay = TimerAction(
+    market_delay = TimerAction(
         period=25.0,
         actions=[
-            swarm_explorer_node
+            market_explorer_node
         ]
     )
    
-    ld.add_action(swm_delay)
+    ld.add_action(market_delay)
 
     return ld

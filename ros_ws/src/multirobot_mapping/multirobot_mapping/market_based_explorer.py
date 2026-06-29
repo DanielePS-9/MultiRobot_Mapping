@@ -16,9 +16,9 @@ from tf2_ros import TransformException
 import random
 import math
 
-class MultiRobotExplorer(Node):
+class MarketBasedExplorer(Node):
     def __init__(self):
-        super().__init__('multi_robot_explorer')
+        super().__init__('market_based_explorer')
         
         # Sottoscrizione alla Mappa Globale Fusa dal map_merger
         self.merged_map_sub = self.create_subscription(
@@ -33,28 +33,20 @@ class MultiRobotExplorer(Node):
         
         self.merged_map = None
         self.robots = ['robot1', 'robot2', 'robot3']
-        self.initial_trigger_done = False # Sostituisce il timer per il primissimo avvio
+        self.initial_trigger_done = False 
         self.start_time = None
         
-        # --- NUOVO: METRICHE DI CONFRONTO (DISTANZA) ---
+        # --- METRICHE DI CONFRONTO (DISTANZA) ---
         self.total_distances = {robot: 0.0 for robot in self.robots}
         self.tracking_last_poses = {robot: None for robot in self.robots}
-        # Timer dedicato al calcolo accurato della distanza (1 Hz)
         self.distance_tracker_timer = self.create_timer(1.0, self.track_distances)
-        
-        # Definiamo gli offset di spawn esatti per aggirare il bug dei relay sui tf_static
-        self.spawn_offsets = {
-            'robot1': {'x': -4.0, 'y': 0.0},
-            'robot2': {'x': -4.0, 'y': -1.0},
-            'robot3': {'x': -4.0, 'y': -2.0}
-        }
         
         # Strutture dati per gestire lo sciame
         self.action_clients = {}
-        self.robot_status = {}   # Può essere 'IDLE' o 'NAVIGATING'
+        self.robot_status = {}   # 'IDLE' o 'NAVIGATING'
         self.assigned_goals = {} # Coordinate assegnate (x, y)
-        self.last_robot_poses = {} # Salva l'ultima posizione per controllo stallo
-        self.stuck_counters = {}    # Conta quanti controlli consecutivi il robot è rimasto fermo
+        self.last_robot_poses = {} 
+        self.stuck_counters = {}    
         
         for robot_name in self.robots:
             action_name = f'/{robot_name}/navigate_to_pose'
@@ -65,32 +57,25 @@ class MultiRobotExplorer(Node):
             self.stuck_counters[robot_name] = 0
             self.get_logger().info(f"Connessione ad Action Server configurata per {robot_name}")
 
-        self.get_logger().info("Swarm Explorer inizializzato in modalità EVENT-DRIVEN (No Timer).")
+        self.get_logger().info("Market-Based Explorer inizializzato.")
         
         # Timer che controlla lo stallo ogni 4.0 secondi
         self.stall_checker_timer = self.create_timer(4.0, self.check_robots_stall)
-        self.get_logger().info("Swarm Explorer inizializzato con controllo anti-stallo attivo.")
 
         # --- WATCHDOG DI FINE ESPLORAZIONE ---
         self.no_frontiers_ticks = 0
         self.max_ticks_to_stop = 6  
-        # Timer indipendente che controlla lo stato globale ogni 5 secondi
         self.watchdog_timer = self.create_timer(5.0, self.exploration_watchdog)
 
     def map_callback(self, msg):
         """Aggiorna la mappa e innesca la primissima assegnazione all'avvio."""
         self.merged_map = msg
         
-        # Innesco iniziale: appena abbiamo la mappa, scateniamo l'orchestratore
         if not self.initial_trigger_done:
-            # Controlliamo preventivamente se l'albero TF globale è completamente assemblato
             if self.tf_buffer.can_transform('world', f'{self.robots[0]}/base_footprint', rclpy.time.Time()):
                 self.initial_trigger_done = True
-                
-                # FACCIAMO PARTIRE IL CRONOMETRO
                 self.start_time = self.get_clock().now()
-                
-                self.get_logger().info("Prima mappa fusa ricevuta e albero TF pronto! Inizio l'assegnazione dei target...")
+                self.get_logger().info("Prima mappa fusa ricevuta e albero TF pronto! Inizio l'asta Market-Based...")
                 self.orchestrator_loop()
             else:
                 self.get_logger().info(
@@ -111,11 +96,9 @@ class MultiRobotExplorer(Node):
             last_pose = self.tracking_last_poses[robot]
             if last_pose is not None:
                 dist = self.distance((current_x, current_y), last_pose)
-                # Filtro anti-rumore: consideriamo solo movimenti maggiori di 1 cm
                 if dist > 0.01: 
                     self.total_distances[robot] += dist
                     
-            # Aggiorniamo la posa precedente
             self.tracking_last_poses[robot] = (current_x, current_y)
 
     def get_quaternion_from_euler(self, roll, pitch, yaw):
@@ -130,88 +113,35 @@ class MultiRobotExplorer(Node):
         return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
     def get_robot_pose(self, robot_name):
-        """Ottiene direttamente la posizione del robot rispetto al frame globale 'world'."""
+        """Ottiene la posizione del robot rispetto al frame globale 'world'."""
         try:
             now = rclpy.time.Time()
-            trans = self.tf_buffer.lookup_transform(
-                'world', 
-                f'{robot_name}/base_footprint', 
-                now
-            )
-            global_x = trans.transform.translation.x
-            global_y = trans.transform.translation.y
-            return global_x, global_y
-            
-        except TransformException as e:
-            self.get_logger().error(f"Errore TF globale per {robot_name}: {str(e)}", throttle_duration_sec=5.0)
+            trans = self.tf_buffer.lookup_transform('world', f'{robot_name}/base_footprint', now)
+            return trans.transform.translation.x, trans.transform.translation.y
+        except TransformException:
             return None, None
 
-    def orchestrator_loop(self):
-        """Calcola i goal per tutti i robot liberi e li invia in blocco (simultaneamente)."""
-        if self.merged_map is None:
-            return
-
-        idle_robots = [r for r in self.robots if self.robot_status[r] == 'IDLE']
-        if not idle_robots:
-            return 
-
-        max_orchestrator_attempts = 150 
-        attempts = 0
-        ready_to_dispatch = []
-
-        while idle_robots and attempts < max_orchestrator_attempts:
-            attempts += 1
-            goal_x, goal_y = self.find_collaborative_frontier()
-            
-            if goal_x is None or goal_y is None:
-                continue 
-
-            closest_robot = None
-            min_dist = float('inf')
-
-            for robot in self.robots:
-                rx, ry = self.get_robot_pose(robot)
-                if rx is not None and ry is not None:
-                    d = self.distance((rx, ry), (goal_x, goal_y))
-                    if d < min_dist:
-                        min_dist = d
-                        closest_robot = robot
-
-            if closest_robot is None:
-                continue
-
-            if self.robot_status[closest_robot] == 'IDLE' and closest_robot in idle_robots:
-                idle_robots.remove(closest_robot)
-                self.assigned_goals[closest_robot] = (goal_x, goal_y)
-                ready_to_dispatch.append((closest_robot, goal_x, goal_y))
-            else:
-                continue
-                
-        if ready_to_dispatch:
-            self.get_logger().info(f"🚀 Calcolo completato! Invio simultaneo di {len(ready_to_dispatch)} goal...")
-            for robot_name, gx, gy in ready_to_dispatch:
-                self.dispatch_robot(robot_name, gx, gy)
-        elif not ready_to_dispatch and attempts >= max_orchestrator_attempts:
-            self.get_logger().warn("Nessuna nuova frontiera trovata in questo momento.")
-
-    def find_collaborative_frontier(self):
-        """Trova un punto inesplorato (-1) adiacente a spazio libero (bianco) e LONTANO da ostacoli."""
+    def generate_frontier_pool(self, required_frontiers):
+        """Genera un pool di frontiere (lotti d'asta) distinte e sicure."""
         width = self.merged_map.info.width
         height = self.merged_map.info.height
         resolution = self.merged_map.info.resolution
         origin_x = self.merged_map.info.origin.position.x
         origin_y = self.merged_map.info.origin.position.y
 
-        max_attempts = 1000  
+        max_attempts = 5000  
         search_radius = 2   
         obstacle_radius = 6 
 
+        frontier_pool = []
         active_targets = [pos for pos in self.assigned_goals.values() if pos is not None]
 
         for _ in range(max_attempts):
+            if len(frontier_pool) >= required_frontiers:
+                break
+
             grid_x = random.randint(0, width - 1)
             grid_y = random.randint(0, height - 1)
-            
             index = grid_x + grid_y * width
             cost = self.merged_map.data[index]
 
@@ -228,7 +158,6 @@ class MultiRobotExplorer(Node):
                     for ny in range(min_y, max_y + 1):
                         n_index = nx + ny * width
                         n_cost = self.merged_map.data[n_index]
-                        
                         cell_dist = math.sqrt((nx - grid_x)**2 + (ny - grid_y)**2)
 
                         if n_cost > 50 and cell_dist <= obstacle_radius:
@@ -245,16 +174,75 @@ class MultiRobotExplorer(Node):
                     target_x = origin_x + (grid_x * resolution)
                     target_y = origin_y + (grid_y * resolution)
                     
-                    too_close_to_others = False
-                    for active_target in active_targets:
-                        if self.distance((target_x, target_y), active_target) < 1.5:
-                            too_close_to_others = True
-                            break
+                    # Verifica che non sia vicino a frontiere di altri robot
+                    too_close_to_others = any(self.distance((target_x, target_y), active) < 1.5 for active in active_targets)
+                    # Verifica che non sia vicino a un'altra frontiera già nel pool d'asta
+                    too_close_in_pool = any(self.distance((target_x, target_y), pool_f) < 2.0 for pool_f in frontier_pool)
                     
-                    if not too_close_to_others:
-                        return target_x, target_y
+                    if not too_close_to_others and not too_close_in_pool:
+                        frontier_pool.append((target_x, target_y))
 
-        return None, None
+        return frontier_pool
+
+    def orchestrator_loop(self):
+        """Logica Market-Based: Raccoglie le offerte dai robot liberi e le assegna al minor costo globale."""
+        if self.merged_map is None:
+            return
+
+        idle_robots = [r for r in self.robots if self.robot_status[r] == 'IDLE']
+        if not idle_robots:
+            return 
+
+        # 1. Creazione Lotti d'Asta (Chiediamo frontiere = robot liberi + 2 per avere scelte migliori)
+        lotti_frontiere = self.generate_frontier_pool(required_frontiers=len(idle_robots) + 2)
+        
+        if not lotti_frontiere:
+            return
+
+        # 2. Raccolta delle offerte (Bidding Phase)
+        bids = []
+        for robot in idle_robots:
+            rx, ry = self.get_robot_pose(robot)
+            if rx is None or ry is None:
+                continue
+            
+            for index, (fx, fy) in enumerate(lotti_frontiere):
+                costo_distanza = self.distance((rx, ry), (fx, fy))
+                bids.append({
+                    'robot': robot,
+                    'frontier_idx': index,
+                    'frontier_pos': (fx, fy),
+                    'cost': costo_distanza
+                })
+
+        # 3. Chiusura dell'Asta (Clearing Phase - Ordinamento globale)
+        bids.sort(key=lambda x: x['cost'])
+
+        assigned_robots = set()
+        assigned_frontiers = set()
+        ready_to_dispatch = []
+
+        for bid in bids:
+            r_name = bid['robot']
+            f_idx = bid['frontier_idx']
+            f_pos = bid['frontier_pos']
+
+            # Assegna solo se né il robot né la frontiera sono già stati presi
+            if r_name not in assigned_robots and f_idx not in assigned_frontiers:
+                assigned_robots.add(r_name)
+                assigned_frontiers.add(f_idx)
+                
+                self.assigned_goals[r_name] = f_pos
+                ready_to_dispatch.append((r_name, f_pos[0], f_pos[1]))
+                
+                if len(assigned_robots) == len(idle_robots):
+                    break
+
+        # 4. Lancio simultaneo dei target vinti
+        if ready_to_dispatch:
+            self.get_logger().info(f"🔨 Asta Market-Based conclusa! Assegnati {len(ready_to_dispatch)} target simultaneamente.")
+            for robot_name, gx, gy in ready_to_dispatch:
+                self.dispatch_robot(robot_name, gx, gy)
 
     def dispatch_robot(self, robot_name, x, y):
         """Invia il comando di navigazione al robot specifico tramite il suo Action Server."""
@@ -278,7 +266,7 @@ class MultiRobotExplorer(Node):
 
         self.robot_status[robot_name] = 'NAVIGATING'
         self.assigned_goals[robot_name] = (x, y)
-        self.get_logger().info(f"[{robot_name}] Assegnata frontiera TERRITORIALE: X={x:.2f}, Y={y:.2f}")
+        self.get_logger().info(f"[{robot_name}] Target vinto all'asta: X={x:.2f}, Y={y:.2f}")
         
         future = self.action_clients[robot_name].send_goal_async(goal_msg)
         future.add_done_callback(lambda fut, r=robot_name: self.goal_response_callback(fut, r))
@@ -288,19 +276,14 @@ class MultiRobotExplorer(Node):
         for robot in self.robots:
             if self.robot_status[robot] == 'NAVIGATING':
                 current_x, current_y = self.get_robot_pose(robot)
-                
                 if current_x is None or current_y is None:
                     continue
                 
                 last_pose = self.last_robot_poses[robot]
-                
                 if last_pose is not None:
                     dist_moved = self.distance((current_x, current_y), last_pose)
-                    
                     if dist_moved < 0.15:
-                        self.get_logger().error(
-                            f"🚨 [{robot}] FERMO (Spostamento: {dist_moved:.3f}m). Forzo cambio goal IMMEDIATO!"
-                        )
+                        self.get_logger().error(f"🚨 [{robot}] FERMO. Forzo rientro in asta!")
                         self.reset_stuck_robot(robot)
                         continue 
                 
@@ -309,7 +292,6 @@ class MultiRobotExplorer(Node):
                 self.last_robot_poses[robot] = None
     
     def reset_stuck_robot(self, robot_name):
-        """Ripristina lo stato del robot bloccato e richiede un nuovo goal globale."""
         self.robot_status[robot_name] = 'IDLE'
         self.assigned_goals[robot_name] = None
         self.stuck_counters[robot_name] = 0
@@ -342,26 +324,24 @@ class MultiRobotExplorer(Node):
             timer.append(self.create_timer(2.5, lambda: self.cooldown_wrapper(robot_name, timer)))
 
     def cooldown_wrapper(self, robot_name, timer_list):
-        """Spegne il timer appena scatta (one-shot) e sblocca il robot."""
         if timer_list and timer_list[0]:
             timer_list[0].destroy() 
         
         if self.robot_status[robot_name] != 'NAVIGATING':
             self.robot_status[robot_name] = 'IDLE'
-            self.get_logger().info(f"🔄 [{robot_name}] Cooldown terminato. Pronto per una nuova frontiera.")
+            self.get_logger().info(f"🔄 [{robot_name}] Cooldown terminato. Pronto per nuova asta.")
             self.orchestrator_loop()
 
-    # ==========================================================
-    # --- LOGICA WATCHDOG E SALVATAGGIO MAPPA AGGIUNTA QUI ---
-    # ==========================================================
     def exploration_watchdog(self):
-        """Controlla periodicamente se l'esplorazione è terminata o se serve svegliare i robot."""
+        """Controlla se l'esplorazione è terminata."""
         if self.merged_map is None:
             return 
             
         all_robots_idle = all(status != 'NAVIGATING' for status in self.robot_status.values())
-        target_x, target_y = self.find_collaborative_frontier()
-        has_frontiers = (target_x is not None and target_y is not None)
+        
+        # Chiediamo al generatore di lotti se esiste almeno 1 frontiera rimanente
+        test_pool = self.generate_frontier_pool(required_frontiers=1)
+        has_frontiers = len(test_pool) > 0
         
         if all_robots_idle and not has_frontiers:
             self.no_frontiers_ticks += 1
@@ -374,15 +354,11 @@ class MultiRobotExplorer(Node):
                 self.terminate_exploration()
         else:
             self.no_frontiers_ticks = 0
-            
-            # Richiamiamo silenziosamente l'orchestratore se ci sono robot liberi e frontiere.
-            # Rimosso il print fuorviante perché l'orchestratore potrebbe decidere 
-            # legittimamente di scartare la frontiera se appartiene al territorio di un robot occupato.
             if has_frontiers and any(status == 'IDLE' for status in self.robot_status.values()):
                 self.orchestrator_loop()
 
     def terminate_exploration(self):
-        """Salva la mappa fusa tramite processo di sistema, stampa le metriche e spegne il nodo."""
+        """Salva mappa, stampa metriche d'asta e spegne."""
         if self.start_time is not None:
             end_time = self.get_clock().now()
             elapsed_duration = end_time - self.start_time 
@@ -391,11 +367,10 @@ class MultiRobotExplorer(Node):
             mins = int(elapsed_secs // 60)
             secs = int(elapsed_secs % 60)
             
-            # --- STAMPA DELLE METRICHE GLOBALI (TEMPO E DISTANZA) ---
             total_swarm_distance = sum(self.total_distances.values())
             
             self.get_logger().info("=====================================================")
-            self.get_logger().info(f"⏱️ TEMPO TOTALE DI ESPLORAZIONE: {mins} min e {secs} sec ({elapsed_secs:.2f} s)")
+            self.get_logger().info(f"⏱️ TEMPO TOTALE (MARKET-BASED): {mins} min e {secs} sec ({elapsed_secs:.2f} s)")
             self.get_logger().info("📏 DISTANZA PERCORSA:")
             for robot in self.robots:
                 self.get_logger().info(f"   - {robot}: {self.total_distances[robot]:.2f} metri")
@@ -409,25 +384,24 @@ class MultiRobotExplorer(Node):
             subprocess.run(
                 [
                     "ros2", "run", "nav2_map_server", "map_saver_cli", 
-                    "-f", "mappa_sciame_completata", 
+                    "-f", "mappa_sciame_completata_mk", 
                     "--ros-args", 
                     "-p", "use_sim_time:=true",
                     "-p", "map_subscribe_transient_local:=true"
                 ],
                 check=True
             )
-            self.get_logger().info("🎉 Mappa salvata con successo come 'mappa_sciame_completata.yaml' e '.pgm'!")
+            self.get_logger().info("🎉 Mappa salvata con successo come 'mappa_sciame_completata_mk.yaml' e '.pgm'!")
         except subprocess.CalledProcessError as e:
-            self.get_logger().error(f"❌ Errore critico durante il salvataggio della mappa: {e}")
+            self.get_logger().error(f"❌ Errore critico durante il salvataggio: {e}")
             
-        self.get_logger().info("🛑 Chiusura del modulo Swarm Explorer per liberare le risorse della simulazione.")
-        
+        self.get_logger().info("🛑 Chiusura del modulo Market-Based Explorer.")
         sys.exit(0)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MultiRobotExplorer()
+    node = MarketBasedExplorer()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

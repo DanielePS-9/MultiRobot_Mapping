@@ -33,6 +33,7 @@ setup(
             'goal_sel2 = multirobot_mapping.random_goal_selector2:main',
             'map_merger = multirobot_mapping.map_merger:main',
             'swarm_ex = multirobot_mapping.swarm_explorer:main',
+            'market_ex = multirobot_mapping.market_based_explorer:main',
         ],
     },
 )
