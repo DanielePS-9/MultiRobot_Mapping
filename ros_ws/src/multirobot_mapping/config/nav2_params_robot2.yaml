@@ -138,7 +138,7 @@ local_costmap:
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0 #3.0
+        cost_scaling_factor: 3.0
         inflation_radius: 0.55 #0.70
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -216,16 +216,16 @@ behavior_server:
     local_footprint_topic: local_costmap/published_footprint
     global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    behavior_plugins: ["spin", "wait", "backup"]
     spin:
       plugin: "nav2_behaviors::Spin"
-      max_rotational_vel: 0.4    # Fai girare il robot lentamente durante il recovery
+      max_rotational_vel: 0.4
       min_rotational_vel: 0.2
+      time_allowed: 5.0
     backup:
       plugin: "nav2_behaviors::BackUp"
       speed: 0.15
-    drive_on_heading:
-      plugin: "nav2_behaviors::DriveOnHeading"
+      time_allowed: 1.2 
     wait:
       plugin: "nav2_behaviors::Wait"
     local_frame: robot2/odom

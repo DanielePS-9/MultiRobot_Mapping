@@ -28,8 +28,8 @@ robot3/slam_toolbox:
 
     # --- NUOVI PARAMETRI DI AGGIORNAMENTO ODOMETRIA ---
     # Evitano che il robot aggiorni la mappa se è fermo o ruota impercettibilmente (causa di "sfocature")
-    minimum_travel_distance: 0.2     # Aggiorna la mappa solo dopo 20 cm di spostamento
-    minimum_travel_heading: 0.2      # Aggiorna la mappa solo dopo circa 11 gradi di rotazione
+    minimum_travel_distance: 0.3     # Aggiorna la mappa solo dopo 20 cm di spostamento
+    minimum_travel_heading: 0.3      # Aggiorna la mappa solo dopo circa 11 gradi di rotazione
     
     # --- FIDUCIA NELL'ODOMETRIA ---
     # Limita l'area di ricerca del laser. Dato che in Gazebo le ruote non slittano, 
@@ -47,6 +47,6 @@ robot3/slam_toolbox:
     # Alziamo le soglie di certezza. Lo SLAM chiuderà un loop (correggerà la mappa) 
     # SOLO se è estremamente sicuro che la stanza sia la stessa, ignorando i finti corridoi.
     loop_match_minimum_response_coarse: 0.50  # (Aumentato da 0.35)
-    loop_match_minimum_response_fine: 0.65    # (Aumentato da 0.45)
+    loop_match_minimum_response_fine: 0.75    # (Aumentato da 0.45)
     
     resolution: 0.05

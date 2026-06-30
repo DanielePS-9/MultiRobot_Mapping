@@ -1,7 +1,7 @@
-image: mappa_sciame_completata_mk.pgm
+image: smart_mappa.pgm
 mode: trinary
 resolution: 0.050
-origin: [-4.879, -4.855, 0]
+origin: [-4.855, -4.855, 0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
