@@ -1,3 +1,5 @@
+# Setup script for the multirobot_mapping package
+
 import os
 from glob import glob
 from setuptools import find_packages, setup
@@ -12,9 +14,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        (os.path.join('share', package_name, 'launch'), glob('launch/*')),
-        (os.path.join('share', package_name, 'config'), glob('config/*')),
-        (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*')), # Include launch files
+        (os.path.join('share', package_name, 'config'), glob('config/*')), # Include config files
+        (os.path.join('share', package_name, 'rviz'), glob('rviz/*')),     # Include rviz files
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,11 +31,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'goal_sel = multirobot_mapping.random_goal_selector:main',
-            'goal_sel2 = multirobot_mapping.random_goal_selector2:main',
-            'map_merger = multirobot_mapping.map_merger:main',
-            'swarm_ex = multirobot_mapping.swarm_explorer:main',
-            'swarm_ex2 = multirobot_mapping.swarm_explorer2:main',
+            'map_merger = multirobot_mapping.map_merger:main',      # Add map_merger script
+            'swarm_ex = multirobot_mapping.swarm_explorer:main',    # Add swarm_explorer script
+            'swarm_ex2 = multirobot_mapping.swarm_explorer2:main',  # Add swarm_explorer2 script
         ],
     },
 )

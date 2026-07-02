@@ -28,8 +28,8 @@ robot2/slam_toolbox:
 
     # --- NUOVI PARAMETRI DI AGGIORNAMENTO ODOMETRIA ---
     # Evitano che il robot aggiorni la mappa se è fermo o ruota impercettibilmente (causa di "sfocature")
-    minimum_travel_distance: 0.3     # Aggiorna la mappa solo dopo 20 cm di spostamento
-    minimum_travel_heading: 0.3      # Aggiorna la mappa solo dopo circa 11 gradi di rotazione
+    minimum_travel_distance: 0.2     # Aggiorna la mappa solo dopo 20 cm di spostamento
+    minimum_travel_heading: 0.2      # Aggiorna la mappa solo dopo circa 11 gradi di rotazione
     
     # --- FIDUCIA NELL'ODOMETRIA ---
     # Limita l'area di ricerca del laser. Dato che in Gazebo le ruote non slittano, 

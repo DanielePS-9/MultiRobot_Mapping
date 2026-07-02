@@ -1,3 +1,9 @@
+# This launch file spawns a TurtleBot3 robot in the Gazebo simulation environment, 
+# setting up the necessary ROS 2 nodes for SLAM and navigation (Nav2),
+# establishing the communication bridge between ROS 2 and Gazebo.
+# It allows to specify the initial position and namespace of the robot, 
+# enabling multi-robot simulations with unique namespaces for each robot instance.
+
 import os
 import sys
  
@@ -6,23 +12,17 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, GroupAction, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import PushRosNamespace, SetRemap
-from launch_ros.actions import Node
- 
-current_dir = os.path.dirname(os.path.abspath(__file__))
- 
-sys.path.append(current_dir)
+from launch_ros.actions import Node, PushRosNamespace, SetRemap
+
+# Add the path to the utils.py file to the system path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Import the functions from utils.py
 from utils import load_sdf_with_namespace, create_namespaced_bridge_yaml
  
 def generate_launch_description():
-    # Get the sdf file
     TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
- 
     model_folder = 'turtlebot3_' + TURTLEBOT3_MODEL
-   
     pkg_slam_toolbox = get_package_share_directory('slam_toolbox')
-
-    pkg_nav2_bringup = get_package_share_directory('nav2_bringup')
  
     sdf_path = os.path.join(
         get_package_share_directory('turtlebot3_gazebo'),
@@ -55,15 +55,18 @@ def generate_launch_description():
         'namespace', default_value='',
         description='Specify namespace of the robot')
  
-
+    # Opaque function to spawn the robot and set up the necessary nodes
     def spawn_rbt(context):
+
+        # Retrieve the launch configuration values
         namespace = context.launch_configurations['namespace']
         x_pose    = context.launch_configurations['x_pose']
         y_pose    = context.launch_configurations['y_pose']
- 
         use_sim_time_val = context.launch_configurations.get('use_sim_time', 'true')
  
+        # Load the SDF model with the specified namespace 
         ns_sdf = load_sdf_with_namespace(sdf_path, namespace)
+        # Create a namespaced bridge YAML file
         ns_yaml = create_namespaced_bridge_yaml(bridge_path,namespace)
  
         slam_params_file = os.path.join(
@@ -75,9 +78,10 @@ def generate_launch_description():
         nav2_params_file = os.path.join(
             get_package_share_directory('multirobot_mapping'),
             'config',
-            'nav2_params_' + f'{namespace}' + '.yaml'
+            'nav2_params.yaml'
         )
  
+        # Node to spawn the robot in Gazebo
         gazebo_ros_spawner = Node(
             package='ros_gz_sim',
             executable='create',
@@ -90,20 +94,29 @@ def generate_launch_description():
             ],
             output='screen',
         )
- 
+
+        # Group action to launch the robot_state_publisher and SLAM toolbox nodes within the specified namespace
         robot_state_publisher_slam = GroupAction([
-            PushRosNamespace(namespace),
-            SetRemap(src='/tf', dst='tf'),
+
+            # Push the specified namespace to the ROS context for all nodes in this group
+            PushRosNamespace(namespace),   
+
+            # Remap the /tf and /tf_static topics to ensure proper frame transformations within the namespace
+            SetRemap(src='/tf', dst='tf'),  
             SetRemap(src='/tf_static', dst='tf_static'),
+
+            # Include the publisher_tb3.launch.py to start the robot_state_publisher node for the TurtleBot3
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(get_package_share_directory('multirobot_mapping'), 'launch', 'publisher_tb3.launch.py')
                 ),
                 launch_arguments={
-                    'use_sim_time': 'true',
+                    'use_sim_time': use_sim_time_val,
                     'frame_prefix': namespace
                 }.items(),
             ),
+
+            # Include the SLAM toolbox launch file to start the SLAM node for the TurtleBot3
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(pkg_slam_toolbox, 'launch', 'online_async_launch.py')
@@ -115,6 +128,7 @@ def generate_launch_description():
             ),
         ])
 
+        # Include the Nav2 launch file to start the navigation stack for the TurtleBot3
         nav2_group = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
@@ -131,6 +145,7 @@ def generate_launch_description():
             }.items(),
         )
 
+        # Node to establish the ROS 2 to Gazebo bridge for communication between the two systems
         gazebo_ros_bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',

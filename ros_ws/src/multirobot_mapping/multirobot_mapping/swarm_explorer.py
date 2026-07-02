@@ -154,6 +154,11 @@ class MultiRobotExplorer(Node):
         idle_robots = [r for r in self.robots if self.robot_status[r] == 'IDLE']
         if not idle_robots:
             return 
+        
+        robot_poses = {}
+        for r in self.robots:
+            rx, ry = self.get_robot_pose(r)
+            robot_poses[r] = (rx, ry)
 
         max_orchestrator_attempts = 150 
         attempts = 0
@@ -161,7 +166,7 @@ class MultiRobotExplorer(Node):
 
         while idle_robots and attempts < max_orchestrator_attempts:
             attempts += 1
-            goal_x, goal_y = self.find_collaborative_frontier()
+            goal_x, goal_y = self.find_collaborative_frontier(robot_poses=robot_poses)
             
             if goal_x is None or goal_y is None:
                 continue 
@@ -194,7 +199,7 @@ class MultiRobotExplorer(Node):
         elif not ready_to_dispatch and attempts >= max_orchestrator_attempts:
             self.get_logger().warn("Nessuna nuova frontiera trovata in questo momento.")
 
-    def find_collaborative_frontier(self):
+    def find_collaborative_frontier(self, robot_poses=None):
         """Trova un punto inesplorato (-1) adiacente a spazio libero (bianco) e LONTANO da ostacoli."""
         width = self.merged_map.info.width
         height = self.merged_map.info.height
@@ -245,6 +250,16 @@ class MultiRobotExplorer(Node):
                     target_x = origin_x + (grid_x * resolution)
                     target_y = origin_y + (grid_y * resolution)
                     
+                    too_close_to_robot = False
+                    if robot_poses:
+                        for rx, ry in robot_poses.values():
+                            if rx is not None and self.distance((target_x, target_y), (rx, ry)) < 0.4:
+                                too_close_to_robot = True
+                                break
+                            
+                    if too_close_to_robot:
+                        continue
+
                     too_close_to_others = False
                     for active_target in active_targets:
                         if self.distance((target_x, target_y), active_target) < 1.5:

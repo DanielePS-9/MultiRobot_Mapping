@@ -1,3 +1,6 @@
+# This launch file starts the 'robot_state_publisher' node for the TurtleBot3, 
+# handling the loading and publishing of the robot's URDF model to the ROS 2 network.
+
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -28,12 +31,12 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'use_sim_time',
-            default_value='true',
+            default_value='true',   # Changed from 'false' to 'true'
             description='Use simulation (Gazebo) clock if true'),
-            DeclareLaunchArgument(
+        DeclareLaunchArgument(      
             'frame_prefix',
             default_value='',
-            description='Define namespace'),
+            description='Define namespace'),    # Define a launch argument for frame_prefix to allow users to specify a namespace for the robot frames
         Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',
