@@ -1,61 +1,53 @@
+# This code implements a ROS 2 node that coordinates the stochastic exploration of a swarm of three robots in a Gazebo simulation. 
+# The node subscribes to the merged global map, identifies unexplored frontiers, and assigns them to idle robots.
+# It also monitors the robots's progress, detects if they are stuck, and reassigns goals as necessary. 
+
 import rclpy
 import subprocess
 import sys
+import random
+import math
+
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.action.client import GoalStatus
-
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
+from tf2_ros import Buffer, TransformListener, TransformException
 
-# Importiamo TF2 per localizzare i robot in tempo reale
-from tf2_ros import Buffer, TransformListener
-from tf2_ros import TransformException
-
-import random
-import math
 
 class MultiRobotExplorer(Node):
     def __init__(self):
         super().__init__('multi_robot_explorer')
         
-        # Sottoscrizione alla Mappa Globale Fusa dal map_merger
-        self.merged_map_sub = self.create_subscription(
-            OccupancyGrid,
-            '/map', 
-            self.map_callback,
-            10)
+        self.merged_map_sub = self.create_subscription(OccupancyGrid,'/map',self.map_callback,10)
         
-        # Inizializziamo il listener per i TF (Transform)
+        # Initialize TF buffer and listener for global transformations
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         
         self.merged_map = None
         self.robots = ['robot1', 'robot2', 'robot3']
-        self.initial_trigger_done = False # Sostituisce il timer per il primissimo avvio
+
+        # Initialize a variable necessary for map_callback
+        self.initial_trigger_done = False 
+
         self.start_time = None
         
-        # --- NUOVO: METRICHE DI CONFRONTO (DISTANZA) ---
         self.total_distances = {robot: 0.0 for robot in self.robots}
         self.tracking_last_poses = {robot: None for robot in self.robots}
-        # Timer dedicato al calcolo accurato della distanza (1 Hz)
+
+        # Initialize a timer to track distances every second
         self.distance_tracker_timer = self.create_timer(1.0, self.track_distances)
         
-        # Definiamo gli offset di spawn esatti per aggirare il bug dei relay sui tf_static
-        self.spawn_offsets = {
-            'robot1': {'x': -4.0, 'y': 0.0},
-            'robot2': {'x': -4.0, 'y': -1.0},
-            'robot3': {'x': -4.0, 'y': -2.0}
-        }
-        
-        # Strutture dati per gestire lo sciame
-        self.action_clients = {}
-        self.robot_status = {}   # Può essere 'IDLE' o 'NAVIGATING'
-        self.assigned_goals = {} # Coordinate assegnate (x, y)
-        self.last_robot_poses = {} # Salva l'ultima posizione per controllo stallo
-        self.stuck_counters = {}    # Conta quanti controlli consecutivi il robot è rimasto fermo
-        
+        # Initialize dictionaries to manage robots
+        self.action_clients = {}    # It will hold the ActionClient for each robot
+        self.robot_status = {}      # It will hold the status of each robot: 'IDLE' or 'NAVIGATING'
+        self.assigned_goals = {}    # It will hold the currently assigned goal for each robot
+        self.last_robot_poses = {}  # It will hold the last known position for each robot
+        self.stuck_counters = {}    # It will hold the counter for each robot to detect if it's stuck
+
+        # Initialize the robot management dictionaries
         for robot_name in self.robots:
             action_name = f'/{robot_name}/navigate_to_pose'
             self.action_clients[robot_name] = ActionClient(self, NavigateToPose, action_name)
@@ -63,43 +55,40 @@ class MultiRobotExplorer(Node):
             self.assigned_goals[robot_name] = None
             self.last_robot_poses[robot_name] = None
             self.stuck_counters[robot_name] = 0
-            self.get_logger().info(f"Connessione ad Action Server configurata per {robot_name}")
-
-        self.get_logger().info("Swarm Explorer inizializzato in modalità EVENT-DRIVEN (No Timer).")
         
-        # Timer che controlla lo stallo ogni 4.0 secondi
+        # Initialize a timer to check for robot stalling every 4 seconds
         self.stall_checker_timer = self.create_timer(4.0, self.check_robots_stall)
-        self.get_logger().info("Swarm Explorer inizializzato con controllo anti-stallo attivo.")
+        self.get_logger().info(f"\033[94mMultiRobotExplorer node initialized. Waiting for the first merged map and TF tree to be ready...\033[0m")
 
-        # --- WATCHDOG DI FINE ESPLORAZIONE ---
+        # Initialize variables for the exploration watchdog
         self.no_frontiers_ticks = 0
         self.max_ticks_to_stop = 6  
-        # Timer indipendente che controlla lo stato globale ogni 5 secondi
+
+        # Initialize a timer to monitor exploration progress every 5 seconds
         self.watchdog_timer = self.create_timer(5.0, self.exploration_watchdog)
 
+
+    # Callback function to handle incoming merged map messages
     def map_callback(self, msg):
-        """Aggiorna la mappa e innesca la primissima assegnazione all'avvio."""
         self.merged_map = msg
         
-        # Innesco iniziale: appena abbiamo la mappa, scateniamo l'orchestratore
+        # Check if this is the first merged map received and if the global TF tree is ready
         if not self.initial_trigger_done:
-            # Controlliamo preventivamente se l'albero TF globale è completamente assemblato
             if self.tf_buffer.can_transform('world', f'{self.robots[0]}/base_footprint', rclpy.time.Time()):
                 self.initial_trigger_done = True
-                
-                # FACCIAMO PARTIRE IL CRONOMETRO
-                self.start_time = self.get_clock().now()
-                
-                self.get_logger().info("Prima mappa fusa ricevuta e albero TF pronto! Inizio l'assegnazione dei target...")
-                self.orchestrator_loop()
-            else:
-                self.get_logger().info(
-                    "Mappa ricevuta, ma l'albero TF non è ancora completamente connesso. Attendo...", 
-                    throttle_duration_sec=2.0
-                )
 
+                # Save the start time of the exploration
+                self.start_time = self.get_clock().now()
+                self.get_logger().info(f"\033[94mFirst merged map received and TF tree is ready! Starting goal assignment...\033[0m")
+                self.coordinator()
+
+            else:
+                self.get_logger().info(f"\033[93mMap received, but the TF tree is not yet fully connected. Waiting...\033[0m",
+                                       throttle_duration_sec=2.0)
+
+
+    # Function to track the distance traveled by each robot
     def track_distances(self):
-        """Calcola e accumula la distanza percorsa da ciascun robot per le metriche."""
         if not self.initial_trigger_done:
             return
 
@@ -111,26 +100,30 @@ class MultiRobotExplorer(Node):
             last_pose = self.tracking_last_poses[robot]
             if last_pose is not None:
                 dist = self.distance((current_x, current_y), last_pose)
-                # Filtro anti-rumore: consideriamo solo movimenti maggiori di 1 cm
+
+                # Exclude very small movements
                 if dist > 0.01: 
                     self.total_distances[robot] += dist
                     
-            # Aggiorniamo la posa precedente
             self.tracking_last_poses[robot] = (current_x, current_y)
 
+
+    # Function to convert Euler angles to quaternion
     def get_quaternion_from_euler(self, roll, pitch, yaw):
         qx = math.sin(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) - math.cos(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
         qy = math.cos(roll/2) * math.sin(pitch/2) * math.cos(yaw/2) + math.sin(roll/2) * math.cos(pitch/2) * math.sin(yaw/2)
         qz = math.cos(roll/2) * math.cos(pitch/2) * math.sin(yaw/2) - math.sin(roll/2) * math.sin(pitch/2) * math.cos(yaw/2)
         qw = math.cos(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) + math.sin(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
         return [qx, qy, qz, qw]
+    
 
+    # Function to calculate the Euclidean distance between two points
     def distance(self, p1, p2):
-        """Calcola la distanza Euclidea tra due punti 2D."""
         return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
+
+    # Function to get the robot's current pose in the global world frame
     def get_robot_pose(self, robot_name):
-        """Ottiene direttamente la posizione del robot rispetto al frame globale 'world'."""
         try:
             now = rclpy.time.Time()
             trans = self.tf_buffer.lookup_transform(
@@ -143,11 +136,12 @@ class MultiRobotExplorer(Node):
             return global_x, global_y
             
         except TransformException as e:
-            self.get_logger().error(f"Errore TF globale per {robot_name}: {str(e)}", throttle_duration_sec=5.0)
+            self.get_logger().error(f"\033[91mPose not available for {robot_name}: {str(e)}\033[0m", throttle_duration_sec=5.0)
             return None, None
 
-    def orchestrator_loop(self):
-        """Calcola i goal per tutti i robot liberi e li invia in blocco (simultaneamente)."""
+
+    # Function to coordinate the assignment of frontiers to idle robots
+    def coordinator(self):
         if self.merged_map is None:
             return
 
@@ -160,12 +154,16 @@ class MultiRobotExplorer(Node):
             rx, ry = self.get_robot_pose(r)
             robot_poses[r] = (rx, ry)
 
-        max_orchestrator_attempts = 150 
+        # Set the maximum number of attempts to find a frontier before giving up
+        max_coordinator_attempts = 150 
         attempts = 0
         ready_to_dispatch = []
 
-        while idle_robots and attempts < max_orchestrator_attempts:
+        
+        while idle_robots and attempts < max_coordinator_attempts:
             attempts += 1
+
+            # Find a collaborative frontier
             goal_x, goal_y = self.find_collaborative_frontier(robot_poses=robot_poses)
             
             if goal_x is None or goal_y is None:
@@ -178,36 +176,43 @@ class MultiRobotExplorer(Node):
                 rx, ry = self.get_robot_pose(robot)
                 if rx is not None and ry is not None:
                     d = self.distance((rx, ry), (goal_x, goal_y))
+
+                    # Check if the robot is the closest one to the frontier
                     if d < min_dist:
                         min_dist = d
                         closest_robot = robot
 
             if closest_robot is None:
                 continue
-
-            if self.robot_status[closest_robot] == 'IDLE' and closest_robot in idle_robots:
+            
+            # If the closest robot is idle, assign the goal to it and prepare for dispatch
+            if closest_robot in idle_robots:
                 idle_robots.remove(closest_robot)
                 self.assigned_goals[closest_robot] = (goal_x, goal_y)
                 ready_to_dispatch.append((closest_robot, goal_x, goal_y))
             else:
                 continue
                 
+        # If we have robots ready to dispatch, send them their goals, otherwise, log a warning if we've exceeded the maximum attempts        
         if ready_to_dispatch:
-            self.get_logger().info(f"🚀 Calcolo completato! Invio simultaneo di {len(ready_to_dispatch)} goal...")
+            self.get_logger().info(f"\033[94mDispatching {len(ready_to_dispatch)} robots to their assigned frontiers.\033[0m")
             for robot_name, gx, gy in ready_to_dispatch:
                 self.dispatch_robot(robot_name, gx, gy)
-        elif not ready_to_dispatch and attempts >= max_orchestrator_attempts:
-            self.get_logger().warn("Nessuna nuova frontiera trovata in questo momento.")
+        elif not ready_to_dispatch and attempts >= max_coordinator_attempts:
+            self.get_logger().warn(f"\033[93mNo frontiers found.\033[0m")
 
+
+    # Function to find a collaborative frontier in the merged map
     def find_collaborative_frontier(self, robot_poses=None):
-        """Trova un punto inesplorato (-1) adiacente a spazio libero (bianco) e LONTANO da ostacoli."""
+        # Extract map dimensions and resolution from the merged map
         width = self.merged_map.info.width
         height = self.merged_map.info.height
         resolution = self.merged_map.info.resolution
         origin_x = self.merged_map.info.origin.position.x
         origin_y = self.merged_map.info.origin.position.y
 
-        max_attempts = 1000  
+        max_attempts = 1000 
+        # Define the search radius for free space and the obstacle radius to avoid 
         search_radius = 2   
         obstacle_radius = 6 
 
@@ -217,6 +222,7 @@ class MultiRobotExplorer(Node):
             grid_x = random.randint(0, width - 1)
             grid_y = random.randint(0, height - 1)
             
+            # Calculate the index in the occupancy grid data array (1D representation)
             index = grid_x + grid_y * width
             cost = self.merged_map.data[index]
 
@@ -224,6 +230,7 @@ class MultiRobotExplorer(Node):
                 free_space_nearby = False
                 too_close_to_obstacle = False
                 
+                # Define the bounds for the search area around the randomly selected cell in the occupancy grid
                 min_x = max(0, grid_x - max(search_radius, obstacle_radius))
                 max_x = min(width - 1, grid_x + max(search_radius, obstacle_radius))
                 min_y = max(0, grid_y - max(search_radius, obstacle_radius))
@@ -236,11 +243,14 @@ class MultiRobotExplorer(Node):
                         
                         cell_dist = math.sqrt((nx - grid_x)**2 + (ny - grid_y)**2)
 
-                        if n_cost > 50 and cell_dist <= obstacle_radius:
+                        # Check if in the obstacle radius there is a cell with cost 100
+                        if n_cost == 100 and cell_dist <= obstacle_radius:
                             too_close_to_obstacle = True
+                            # Early exit if we find an obstacle too close
                             break
 
-                        if 0 <= n_cost < 20 and cell_dist <= search_radius: 
+                        # Check if in the search radius there is a cell with cost 0        
+                        if n_cost == 0 and cell_dist <= search_radius: 
                             free_space_nearby = True
                     
                     if too_close_to_obstacle:
@@ -253,8 +263,10 @@ class MultiRobotExplorer(Node):
                     too_close_to_robot = False
                     if robot_poses:
                         for rx, ry in robot_poses.values():
+                            # Check if the robot's position is too close to the target (less than 0.4 meters)
                             if rx is not None and self.distance((target_x, target_y), (rx, ry)) < 0.4:
                                 too_close_to_robot = True
+                                # Early exit if we find a robot too close to the target
                                 break
                             
                     if too_close_to_robot:
@@ -262,19 +274,23 @@ class MultiRobotExplorer(Node):
 
                     too_close_to_others = False
                     for active_target in active_targets:
+                        # Check if the target is too close to any other active target (less than 1.5 meters)
                         if self.distance((target_x, target_y), active_target) < 1.5:
                             too_close_to_others = True
+                            # Early exit if we find an active target too close to the new target
                             break
                     
+                    # If all the conditions are satisfied, return the target coordinates
                     if not too_close_to_others:
                         return target_x, target_y
 
         return None, None
 
+    # Function to dispatch a robot to a specific goal
     def dispatch_robot(self, robot_name, x, y):
-        """Invia il comando di navigazione al robot specifico tramite il suo Action Server."""
+        # Check if the action server for the robot is ready
         if not self.action_clients[robot_name].wait_for_server(timeout_sec=1.0):
-            self.get_logger().warn(f"Server Nav2 non pronto per {robot_name}")
+            self.get_logger().warn(f"\033[93m[{robot_name}] Action server not ready. Cannot dispatch goal.\033[0m")
             return
 
         goal_msg = NavigateToPose.Goal()
@@ -285,6 +301,7 @@ class MultiRobotExplorer(Node):
         goal_msg.pose.pose.position.y = y
         goal_msg.pose.pose.position.z = 0.0
 
+        # Assign a random orientation to the robot for exploration purposes
         q = self.get_quaternion_from_euler(0.0, 0.0, random.uniform(-math.pi, math.pi))
         goal_msg.pose.pose.orientation.x = q[0]
         goal_msg.pose.pose.orientation.y = q[1]
@@ -293,13 +310,14 @@ class MultiRobotExplorer(Node):
 
         self.robot_status[robot_name] = 'NAVIGATING'
         self.assigned_goals[robot_name] = (x, y)
-        self.get_logger().info(f"[{robot_name}] Assegnata frontiera TERRITORIALE: X={x:.2f}, Y={y:.2f}")
+        self.get_logger().info(f"\033[94m[{robot_name}] Dispatching to goal: ({x:.2f}, {y:.2f})\033[0m")
         
+        # Send the goal asynchronously and set up a callback for the response
         future = self.action_clients[robot_name].send_goal_async(goal_msg)
         future.add_done_callback(lambda fut, r=robot_name: self.goal_response_callback(fut, r))
 
+    # Function to check if any robot is stuck and force a goal change if necessary
     def check_robots_stall(self):
-        """Controlla lo stallo e cambia IMMEDIATAMENTE goal se il robot è fermo."""
         for robot in self.robots:
             if self.robot_status[robot] == 'NAVIGATING':
                 current_x, current_y = self.get_robot_pose(robot)
@@ -310,12 +328,12 @@ class MultiRobotExplorer(Node):
                 last_pose = self.last_robot_poses[robot]
                 
                 if last_pose is not None:
+                    # Calculate the distance moved since the last check
                     dist_moved = self.distance((current_x, current_y), last_pose)
                     
+                    # If the robot has moved less than 0.15 meters, consider it stuck and force a goal change
                     if dist_moved < 0.15:
-                        self.get_logger().error(
-                            f"🚨 [{robot}] FERMO (Spostamento: {dist_moved:.3f}m). Forzo cambio goal IMMEDIATO!"
-                        )
+                        self.get_logger().error(f"\033[91m[{robot}] appears to be stuck. Forcing a new goal assignment.\033[0m")
                         self.reset_stuck_robot(robot)
                         continue 
                 
@@ -323,120 +341,128 @@ class MultiRobotExplorer(Node):
             else:
                 self.last_robot_poses[robot] = None
     
+    # Function to reset the state of a stuck robot and request a new global goal
     def reset_stuck_robot(self, robot_name):
-        """Ripristina lo stato del robot bloccato e richiede un nuovo goal globale."""
+        # Reset the robot's state to IDLE and clear its assigned goal
         self.robot_status[robot_name] = 'IDLE'
         self.assigned_goals[robot_name] = None
         self.stuck_counters[robot_name] = 0
         self.last_robot_poses[robot_name] = None
-        self.orchestrator_loop()
+        # Request a new global goal for the robot by calling the coordinator
+        self.coordinator()
 
+    # Callback function to handle the response from the action server when a goal is sent
     def goal_response_callback(self, future, robot_name):
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().warn(f"[{robot_name}] Goal rifiutato dal Nav2. Cooling down...")
+            self.get_logger().warn(f"\033[93m[{robot_name}] Goal rejected by the action server. Applying cooldown...\033[0m")
             timer = []
             timer.append(self.create_timer(2.0, lambda: self.cooldown_wrapper(robot_name, timer)))
             return
 
+        # If the goal is accepted, set up a callback to handle the result when the robot reaches its destination or fails
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(lambda fut, r=robot_name: self.get_result_callback(fut, r))
 
+    # Callback function to handle the result of the navigation goal
     def get_result_callback(self, future, robot_name):
         status = future.result().status
         
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info(f"🟢 [{robot_name}] Arrivato a destinazione con successo!")
+            self.get_logger().info(f"\033[92m[{robot_name}] Navigation succeeded! Ready for a new frontier.\033[0m")
             self.robot_status[robot_name] = 'IDLE'
             self.assigned_goals[robot_name] = None
-            self.orchestrator_loop()
+            self.coordinator()
         else:
-            self.get_logger().warn(f"🔴 [{robot_name}] Navigazione fallita. Applico Cooldown...")
+            self.get_logger().warn(f"\033[91m[{robot_name}] Navigation failed. Applying cooldown...\033[0m")
             self.assigned_goals[robot_name] = None
             timer = []
             timer.append(self.create_timer(2.5, lambda: self.cooldown_wrapper(robot_name, timer)))
 
+    # Function to handle the cooldown period after a robot fails to reach its goal
     def cooldown_wrapper(self, robot_name, timer_list):
-        """Spegne il timer appena scatta (one-shot) e sblocca il robot."""
         if timer_list and timer_list[0]:
             timer_list[0].destroy() 
         
+        # After the cooldown, if the robot is not navigating, set its status to IDLE and call the coordinator to assign a new goal
         if self.robot_status[robot_name] != 'NAVIGATING':
             self.robot_status[robot_name] = 'IDLE'
-            self.get_logger().info(f"🔄 [{robot_name}] Cooldown terminato. Pronto per una nuova frontiera.")
-            self.orchestrator_loop()
+            self.get_logger().info(f"\033[94m[{robot_name}] Cooldown complete. Ready for a new frontier.\033[0m")
+            self.coordinator()
 
-    # ==========================================================
-    # --- LOGICA WATCHDOG E SALVATAGGIO MAPPA AGGIUNTA QUI ---
-    # ==========================================================
+    # Function to monitor the exploration process and determine if it should be terminated
     def exploration_watchdog(self):
-        """Controlla periodicamente se l'esplorazione è terminata o se serve svegliare i robot."""
         if self.merged_map is None:
             return 
             
+        # Check if all robots are idle
         all_robots_idle = all(status != 'NAVIGATING' for status in self.robot_status.values())
+
+        # Check if there are any frontiers available for exploration
         target_x, target_y = self.find_collaborative_frontier()
         has_frontiers = (target_x is not None and target_y is not None)
         
+        # Check if all robots are idle and there are no frontiers available
         if all_robots_idle and not has_frontiers:
+            # Increment the counter for ticks with no frontiers
             self.no_frontiers_ticks += 1
-            self.get_logger().info(
-                f"Nessuna frontiera rilevata e robot fermi. Spegnimento in corso... "
-                f"({self.no_frontiers_ticks}/{self.max_ticks_to_stop})"
-            )
+            self.get_logger().info(f"\033[94mNo frontiers available. Shutting down... ({self.no_frontiers_ticks}/{self.max_ticks_to_stop})\033[0m")
             
+            # If the number of ticks with no frontiers exceeds the maximum allowed, terminate the exploration
             if self.no_frontiers_ticks >= self.max_ticks_to_stop:
                 self.terminate_exploration()
         else:
+            # Reset the counter for ticks with no frontiers if there are frontiers available or robots are navigating
             self.no_frontiers_ticks = 0
             
-            # Richiamiamo silenziosamente l'orchestratore se ci sono robot liberi e frontiere.
-            # Rimosso il print fuorviante perché l'orchestratore potrebbe decidere 
-            # legittimamente di scartare la frontiera se appartiene al territorio di un robot occupato.
+            # If there are frontiers available and any robot is idle, call the coordinator to assign new goals
             if has_frontiers and any(status == 'IDLE' for status in self.robot_status.values()):
-                self.orchestrator_loop()
+                self.coordinator()
 
+    # Function to terminate the exploration process, save the merged map, print metrics, and shut down the node
     def terminate_exploration(self):
-        """Salva la mappa fusa tramite processo di sistema, stampa le metriche e spegne il nodo."""
         if self.start_time is not None:
             end_time = self.get_clock().now()
-            elapsed_duration = end_time - self.start_time 
+            # Calculate the total duration of the exploration
+            total_duration = end_time - self.start_time 
             
-            elapsed_secs = elapsed_duration.nanoseconds / 1e9
-            mins = int(elapsed_secs // 60)
-            secs = int(elapsed_secs % 60)
+            duration_secs = total_duration.nanoseconds / 1e9
+            mins = int(duration_secs // 60)
+            secs = int(duration_secs % 60)
             
-            # --- STAMPA DELLE METRICHE GLOBALI (TEMPO E DISTANZA) ---
+            # Calculate the total distance traveled by the swarm of robots
             total_swarm_distance = sum(self.total_distances.values())
             
-            self.get_logger().info("=====================================================")
-            self.get_logger().info(f"⏱️ TEMPO TOTALE DI ESPLORAZIONE: {mins} min e {secs} sec ({elapsed_secs:.2f} s)")
-            self.get_logger().info("📏 DISTANZA PERCORSA:")
+            self.get_logger().info(f"\033[92m=====================================================\033[0m")
+            self.get_logger().info(f"\033[92mTotal duration: {mins} min and {secs} sec ({duration_secs:.2f} s)\033[0m")
+            self.get_logger().info(f"\033[92mDistance traveled:\033[0m")
             for robot in self.robots:
-                self.get_logger().info(f"   - {robot}: {self.total_distances[robot]:.2f} metri")
-            self.get_logger().info(f"🏆 DISTANZA TOTALE SCIAME: {total_swarm_distance:.2f} metri")
-            self.get_logger().info("=====================================================")
+                self.get_logger().info(f"\033[92m   - {robot}: {self.total_distances[robot]:.2f} meters\033[0m")
+            self.get_logger().info(f"\033[92mTotal swarm distance: {total_swarm_distance:.2f} meters\033[0m")
+            self.get_logger().info(f"\033[92m=====================================================\033[0m")
 
-        self.get_logger().info("✅ ESPLORAZIONE COMPLETATA! Tutte le aree accessibili sono state mappate.")
-        self.get_logger().info("💾 Avvio il salvataggio automatico della mappa fusa...")
+        self.get_logger().info(f"\033[92mExploration Complete. All accessible areas have been mapped.\033[0m")
+        self.get_logger().info(f"\033[94mInitiating automatic map saving...\033[0m")
         
+        # Use subprocess to call the ROS 2 map_saver_cli command to save the merged map
         try:
             subprocess.run(
                 [
                     "ros2", "run", "nav2_map_server", "map_saver_cli", 
-                    "-f", "mappa_sciame_completata", 
+                    "-f", "stochastic_swarm_map", 
                     "--ros-args", 
                     "-p", "use_sim_time:=true",
                     "-p", "map_subscribe_transient_local:=true"
                 ],
                 check=True
             )
-            self.get_logger().info("🎉 Mappa salvata con successo come 'mappa_sciame_completata.yaml' e '.pgm'!")
+            self.get_logger().info(f"\033[92mMap 'stochastic_swarm_map.yaml' and '.pgm' saved successfully!\033[0m")
         except subprocess.CalledProcessError as e:
-            self.get_logger().error(f"❌ Errore critico durante il salvataggio della mappa: {e}")
+            self.get_logger().error(f"\033[91mCritical error occurred while saving the map: {e}\033[0m")
             
-        self.get_logger().info("🛑 Chiusura del modulo Swarm Explorer per liberare le risorse della simulazione.")
+        self.get_logger().info(f"\033[94mClosing Swarm Explorer module to free up simulation resources.\033[0m")
         
+        # Shutdown the ROS 2 node and exit the program
         sys.exit(0)
 
 

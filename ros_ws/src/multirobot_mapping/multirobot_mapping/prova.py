@@ -20,47 +20,43 @@ from geometry_msgs.msg import PoseStamped
 from tf2_ros import Buffer, TransformListener, TransformException
 from rclpy.time import Time
 from visualization_msgs.msg import Marker, MarkerArray
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
  
 class SmartSwarmExplorer(Node):
     def __init__(self):
         super().__init__('smart_swarm_explorer')
-       
-        if not self.has_parameter('use_sim_time'):
-            self.declare_parameter('use_sim_time', True)
-           
-        qos_profile = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            depth=1
-        )
-        self.merged_map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, qos_profile)
-        self.frontier_marker_pub = self.create_publisher(MarkerArray, '/frontier_markers', 10)
-        self.viz_timer = self.create_timer(1.0, self.visualization_tick)
-        self.tf_buffer = Buffer(rclpy.duration.Duration(seconds=10.0))
+
+        self.merged_map_sub = self.create_subscription(OccupancyGrid,'/map',self.map_callback,10)
+        self.frontier_marker_pub = self.create_publisher(MarkerArray,'/frontier_markers',10)
+
+        # Initialize TF buffer and listener for global transformations
+        self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-       
+
         self.merged_map = None
         self.robots = ['robot1', 'robot2', 'robot3']
+
+        # Initialize a variable necessary for map_callback
         self.initial_trigger_done = False
-       
-        # Variabili per le METRICHE
+
         self.start_time = None
-        self.robot_distances = {robot: 0.0 for robot in self.robots}
-        self.previous_poses_for_dist = {robot: None for robot in self.robots}
-       
-        self.action_clients = {}
-        self.robot_status = {}  
-        self.assigned_goals = {}
-        self.last_robot_poses = {}
-        self.stuck_counters = {}    
-       
-        self.active_goal_handles = {robot: None for robot in self.robots}
-       
-        self.REPULSION_RADIUS = 1.0  
-        # [MODIFICA] Impostato a 12: un ottimo compromesso tra filtraggio del rumore e sensibilità agli spazi.
-        self.MIN_FRONTIER_SIZE = 12
-       
+
+        self.total_distances = {robot: 0.0 for robot in self.robots}
+        self.tracking_last_poses = {robot: None for robot in self.robots}
+        
+        # Initialize a timer to track distances every second
+        self.distance_tracker_timer = self.create_timer(1.0, self.track_distance)
+
+        # 
+        self.viz_timer = self.create_timer(1.0, self.visualization_tick)
+        
+        # Initialize dictionaries to manage robots
+        self.action_clients = {}    # It will hold the ActionClient for each robot
+        self.robot_status = {}      # It will hold the status of each robot: 'IDLE' or 'NAVIGATING'
+        self.assigned_goals = {}    # It will hold the currently assigned goal for each robot
+        self.last_robot_poses = {}  # It will hold the last known position for each robot
+        self.stuck_counters = {}    # It will hold the counter for each robot to detect if it's stuck
+        
+        # Initialize the robot management dictionaries
         for robot_name in self.robots:
             action_name = f'/{robot_name}/navigate_to_pose'
             self.action_clients[robot_name] = ActionClient(self, NavigateToPose, action_name)
@@ -68,22 +64,31 @@ class SmartSwarmExplorer(Node):
             self.assigned_goals[robot_name] = None
             self.last_robot_poses[robot_name] = None
             self.stuck_counters[robot_name] = 0
- 
-        self.get_logger().info("Smart Swarm Explorer: Smart Targeting per le frontiere attivato.")
+
+
+        self.active_goal_handles = {robot: None for robot in self.robots}
        
-        self.startup_timer = self.create_timer(2.0, self.startup_monitor)
+        # 
+        self.REPULSION_RADIUS = 1.0  
+
+        # 
+        self.MIN_FRONTIER_SIZE = 12
+       
+        
+        self.get_logger().info(f"\033[94mMultiRobotExplorer node initialized. Waiting for the first merged map and TF tree to be ready...\033[0m")
+       
+        # Initialize a timer to check for robot stalling every 4 seconds
         self.stall_checker_timer = self.create_timer(4.0, self.check_robots_stall)
-        self.watchdog_timer = self.create_timer(5.0, self.exploration_watchdog)
-       
-        # Timer dedicato per calcolare accuratamente la distanza percorsa ogni secondo
-        self.distance_timer = self.create_timer(1.0, self.update_distances)
-       
+
+        # Initialize variables for the exploration watchdog
         self.no_frontiers_ticks = 0
         self.max_ticks_to_stop = 6
- 
+
+        # Initialize a timer to monitor exploration progress every 5 seconds
+        self.watchdog_timer = self.create_timer(5.0, self.exploration_watchdog)
+       
+    #
     def visualization_tick(self):
-        # Pubblica SEMPRE i candidati, anche quando nessun robot è IDLE:
-        # così vedi il bug (puntini raggruppati lontano) indipendentemente dal dispatch.
         if self.merged_map is None:
             return
         self.publish_frontier_markers(self.extract_frontiers())
@@ -155,28 +160,23 @@ class SmartSwarmExplorer(Node):
     
         self.frontier_marker_pub.publish(marker_array)
 
-    def startup_monitor(self):
-        if self.merged_map is None:
-            self.get_logger().warn("⏳ In attesa della mappa globale sul topic '/map'...", throttle_duration_sec=4.0)
-            return
-        if not self.initial_trigger_done:
-            try:
-                if self.tf_buffer.can_transform('world', f'{self.robots[0]}/base_footprint', rclpy.time.Time()):
-                    self.initial_trigger_done = True
-                    # Registriamo l'inizio del tempo di simulazione (Clock di Gazebo)
-                    self.start_time = self.get_clock().now()
-                    self.get_logger().info("✅ Mappa e TF ('world' -> base_footprint) ricevuti! Inizio orchestrazione...")
-                    self.startup_timer.destroy()
-                    self.orchestrator_loop()
-                else:
-                    self.get_logger().warn("⏳ Mappa ricevuta, ma in attesa dell'albero TF da 'world' ai robot...", throttle_duration_sec=4.0)
-            except Exception:
-                pass
- 
+    # Callback function to handle incoming merged map messages
     def map_callback(self, msg):
         self.merged_map = msg
-        if self.initial_trigger_done:
-            self.orchestrator_loop()
+        
+        # Check if this is the first merged map received and if the global TF tree is ready
+        if not self.initial_trigger_done:
+            if self.tf_buffer.can_transform('world', f'{self.robots[0]}/base_footprint', rclpy.time.Time()):
+                self.initial_trigger_done = True
+
+                # Save the start time of the exploration
+                self.start_time = self.get_clock().now()
+                self.get_logger().info(f"\033[94mFirst merged map received and TF tree is ready! Starting goal assignment...\033[0m")
+                self.coordinator()
+
+            else:
+                self.get_logger().info(f"\033[93mMap received, but the TF tree is not yet fully connected. Waiting...\033[0m",
+                                       throttle_duration_sec=2.0)
  
     def update_distances(self):
         """Calcola e accumula la distanza percorsa da ciascun robot."""
@@ -187,12 +187,12 @@ class SmartSwarmExplorer(Node):
             pose = self.get_robot_pose(robot)
             if pose[0] is not None:
                 curr_pose = (pose[0], pose[1])
-                if self.previous_poses_for_dist[robot] is not None:
-                    dist = self.euclidean_distance(curr_pose, self.previous_poses_for_dist[robot])
+                if self.tracking_last_poses[robot] is not None:
+                    dist = self.euclidean_distance(curr_pose, self.tracking_last_poses[robot])
                     # Filtro anti-rumore: consideriamo solo movimenti maggiori di 5 millimetri
                     if dist > 0.005:
-                        self.robot_distances[robot] += dist
-                self.previous_poses_for_dist[robot] = curr_pose
+                        self.total_distances[robot] += dist
+                self.tracking_last_poses[robot] = curr_pose
  
     def get_quaternion_from_euler(self, roll, pitch, yaw):
         qx = math.sin(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) - math.cos(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
@@ -325,7 +325,7 @@ class SmartSwarmExplorer(Node):
     
         return centroids
  
-    def orchestrator_loop(self):
+    def coordinator(self):
         if not self.initial_trigger_done or self.merged_map is None:
             return
  
@@ -466,7 +466,7 @@ class SmartSwarmExplorer(Node):
                             else:
                                 self.robot_status[robot] = 'IDLE'
                                 self.assigned_goals[robot] = None
-                                self.orchestrator_loop()
+                                self.coordinator()
                             continue
                     else:
                         self.stuck_counters[robot] = 0
@@ -490,7 +490,7 @@ class SmartSwarmExplorer(Node):
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.robot_status[robot_name] = 'IDLE'
             self.assigned_goals[robot_name] = None
-            self.orchestrator_loop()
+            self.coordinator()
         else:
             self.assigned_goals[robot_name] = None
             timer = []
@@ -500,7 +500,7 @@ class SmartSwarmExplorer(Node):
     def cooldown_wrapper(self, robot_name, timer_list):
         if timer_list and timer_list[0]: timer_list[0].destroy()
         self.robot_status[robot_name] = 'IDLE'
-        self.orchestrator_loop()
+        self.coordinator()
  
     def exploration_watchdog(self):
         if self.merged_map is None: return
@@ -511,7 +511,7 @@ class SmartSwarmExplorer(Node):
                     self.terminate_exploration()
             else:
                 self.no_frontiers_ticks = 0
-                self.orchestrator_loop()
+                self.coordinator()
  
     def terminate_exploration(self):
         # --- STAMPA DELLE METRICHE FINALI ---
@@ -519,13 +519,13 @@ class SmartSwarmExplorer(Node):
             # Calcolo del tempo trascorso e della distanza totale
             elapsed_duration = self.get_clock().now() - self.start_time
             elapsed_seconds = elapsed_duration.nanoseconds / 1e9
-            total_dist = sum(self.robot_distances.values())
+            total_dist = sum(self.total_distances.values())
            
             self.get_logger().info("==================================================")
             self.get_logger().info("📊 REPORT METRICHE ESPLORAZIONE:")
             self.get_logger().info(f"⏱️  Tempo di simulazione (Clock): {elapsed_seconds:.2f} secondi")
             for robot in self.robots:
-                self.get_logger().info(f"📏 Distanza percorsa da [{robot}]: {self.robot_distances[robot]:.2f} metri")
+                self.get_logger().info(f"📏 Distanza percorsa da [{robot}]: {self.total_distances[robot]:.2f} metri")
             self.get_logger().info(f"📈 Distanza TOTALE dello sciame:  {total_dist:.2f} metri")
             self.get_logger().info("==================================================")
  

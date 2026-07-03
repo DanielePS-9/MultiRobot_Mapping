@@ -52,7 +52,7 @@ def generate_launch_description():
                 get_package_share_directory('turtlebot3_gazebo'),
                 'models'))
    
-   # Bridge the /clock topic from Gazebo to ROS 2
+    # Bridge the /clock topic from Gazebo to ROS 2
     clock_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -98,7 +98,7 @@ def generate_launch_description():
         output='screen'
     )
    
-   # Publish a static transform from the world frame to robot1's map frame
+    # Publish a static transform from the world frame to robot1's map frame
     robot1_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',

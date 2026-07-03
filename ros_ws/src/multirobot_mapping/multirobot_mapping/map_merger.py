@@ -1,17 +1,20 @@
-#!/usr/bin/env python3
+# This code implements a ROS 2 node that merges the local maps of three robots into a single global map. 
+# The node subscribes to the local maps published by each robot, transforms the coordinates of the known cells into a 
+# common world frame, and publishes the merged map as an OccupancyGrid message. The merged map is dynamically sized 
+# based on the explored areas of all robots.
+
 import rclpy
-from rclpy.node import Node
-from nav_msgs.msg import OccupancyGrid
 import numpy as np
 
-# --- NUOVE IMPORTAZIONI PER IL QoS ---
+from rclpy.node import Node
+from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
 class CustomMapMerger(Node):
     def __init__(self):
         super().__init__('custom_map_merger')
         
-        # Dichiarazione parametri
+        # Default spawn positions for the three robots
         self.declare_parameter('r1_x', -4.0)
         self.declare_parameter('r1_y', 0.0)
         self.declare_parameter('r2_x', -4.0)
@@ -19,73 +22,71 @@ class CustomMapMerger(Node):
         self.declare_parameter('r3_x', -4.0)
         self.declare_parameter('r3_y', -2.0)
  
-        # Conversione forzata a float
         self.poses = {
             'robot1': (float(self.get_parameter('r1_x').value), float(self.get_parameter('r1_y').value)),
             'robot2': (float(self.get_parameter('r2_x').value), float(self.get_parameter('r2_y').value)),
             'robot3': (float(self.get_parameter('r3_x').value), float(self.get_parameter('r3_y').value)),
         }
  
+        # Initialize a dictionary to hold the latest local maps from each robot
         self.local_maps = {'robot1': None, 'robot2': None, 'robot3': None}
  
-        # Sottoscrizioni ai topic
         self.create_subscription(OccupancyGrid, '/robot1/map', lambda msg: self.map_callback(msg, 'robot1'), 10)
         self.create_subscription(OccupancyGrid, '/robot2/map', lambda msg: self.map_callback(msg, 'robot2'), 10)
         self.create_subscription(OccupancyGrid, '/robot3/map', lambda msg: self.map_callback(msg, 'robot3'), 10)
  
-        # --- CREAZIONE DEL PROFILO QoS TRANSIENT LOCAL ---
+        # Define a QoS profile with transient local durability for the merged map publisher
         map_qos = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL
         )
         
-        # Sostituzione della coda '10' con il nuovo profilo 'map_qos'
         self.merged_map_pub = self.create_publisher(OccupancyGrid, '/map', map_qos)
         
-        # Timer per la fusione (1 volta al secondo)
+        # Set up a map update period
         self.create_timer(1.0, self.merge_and_publish)
-        self.get_logger().info("Custom Dynamic Map Merger avviato con QoS Transient Local!")
  
+    # Callback function to store the latest local map from each robot
     def map_callback(self, msg, robot_name):
         self.local_maps[robot_name] = msg
  
+    # Function to merge the local maps and publish the global map
     def merge_and_publish(self):
         if not any(self.local_maps.values()):
             return
  
-        resolution = 0.05  # Risoluzione della mappa globale
+        resolution = 0.05
         
-        # Liste per accumulare tutti i punti validi scoperti nel mondo
         all_x_world = []
         all_y_world = []
         all_vals = []
  
-        # --- FASE 1: RACCOLTA E TRASFORMAZIONE DI TUTTI I PUNTI NOTI ---
         for r_name, l_map in self.local_maps.items():
             if l_map is None:
                 continue
             
             spawn_x, spawn_y = self.poses[r_name]
+
+            # Extract metadata from the local map
             l_res = l_map.info.resolution
             l_w = l_map.info.width
             l_h = l_map.info.height
             l_orig_x = l_map.info.origin.position.x
             l_orig_y = l_map.info.origin.position.y
             
+            # Convert the flat data array into a 2D NumPy array
             local_grid = np.array(l_map.data, dtype=np.int8).reshape((l_h, l_w))
  
-            # Trova gli indici delle celle note (esclude il -1 che è l'inesplorato locale)
+            # Find the indices of known cells in the local map
             j_indices, i_indices = np.where(local_grid != -1)
             vals = local_grid[j_indices, i_indices]
  
             if len(vals) == 0:
                 continue
  
-            # Calcola coordinate metriche relative al frame di origine del robot
             x_local = l_orig_x + i_indices * l_res
             y_local = l_orig_y + j_indices * l_res
  
-            # Trasla nel frame globale 'world' usando lo spawn
             x_world = spawn_x + x_local
             y_world = spawn_y + y_local
  
@@ -93,42 +94,37 @@ class CustomMapMerger(Node):
             all_y_world.append(y_world)
             all_vals.append(vals)
  
-        # Se nessun robot ha ancora inviato celle note, ci fermiamo
         if not all_x_world:
             return
  
-        # Uniamo tutti i vettori dei robot in macro-array NumPy
         all_x = np.concatenate(all_x_world)
         all_y = np.concatenate(all_y_world)
         all_v = np.concatenate(all_vals)
  
-        # --- FASE 2: CALCOLO DINAMICO DEI CONFINI DELLA MAPPA ---
-        # L'origine diventa il punto minimo assoluto esplorato
+        # Set the origin of the global map to the minimum x and y coordinates found
         g_origin_x = float(np.min(all_x))
         g_origin_y = float(np.min(all_y))
         
-        # Convertiamo temporaneamente le coordinate in indici pixel grezzi per trovare il massimo
+        # Convert the world coordinates to grid indices in the global map
         g_i_raw = ((all_x - g_origin_x) / resolution).astype(int)
         g_j_raw = ((all_y - g_origin_y) / resolution).astype(int)
  
-        # La dimensione della mappa si adatta perfettamente al pixel massimo trovato
+        # Determine the dimensions of the global grid based on the maximum indices found
         g_width = int(np.max(g_i_raw) + 1)
         g_height = int(np.max(g_j_raw) + 1)
  
-        # --- FASE 3: COSTRUZIONE DELLA GRIGLIA GLOBALE ---
-        # Creiamo una griglia dimensionata al millimetro, inizializzata a -1 (inesplorato)
+        # Initialize the global grid with unknown values (-1) 
         global_grid = np.full((g_height, g_width), -1, dtype=np.int8)
  
-        # Scriviamo PRIMA gli ostacoli (100)...
+        # Overwrite the occupied cells (100).
         obs_mask = (all_v == 100)
         global_grid[g_j_raw[obs_mask], g_i_raw[obs_mask]] = 100
         
-        # ...e DOPO lo spazio libero (0). In questo modo, se un robot passa dove prima c'era
-        # una scia/fantasma lasciata da un altro robot, lo spazio libero la CANCELLERÀ.
+        # Overwrite the free cells (0).
         free_mask = (all_v == 0)
         global_grid[g_j_raw[free_mask], g_i_raw[free_mask]] = 0
 
-        # --- FASE 4: PUBBLICAZIONE MESSAGGIO ---
+        # Create and publish the merged OccupancyGrid message
         merged_msg = OccupancyGrid()
         merged_msg.header.stamp = self.get_clock().now().to_msg()
         merged_msg.header.frame_id = 'world'
@@ -137,7 +133,6 @@ class CustomMapMerger(Node):
         merged_msg.info.height = g_height
         merged_msg.info.origin.position.x = g_origin_x
         merged_msg.info.origin.position.y = g_origin_y
-        
         merged_msg.data = global_grid.flatten().tolist()
         self.merged_map_pub.publish(merged_msg)
  

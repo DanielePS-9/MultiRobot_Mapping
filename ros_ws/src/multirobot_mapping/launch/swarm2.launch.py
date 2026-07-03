@@ -1,12 +1,14 @@
+# This launch file is used to spawn three TurtleBot3 robots in a Gazebo simulation,
+# relay their namespaced TF topics to the global ones, and launch RViz for visualization. 
+# It also includes a map merger node and a swarm exploration node.
+
 import os
  
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import AppendEnvironmentVariable
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import AppendEnvironmentVariable, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
- 
 from launch_ros.actions import Node
  
  
@@ -35,6 +37,7 @@ def generate_launch_description():
         'stanza.world'
     )
  
+    # Launch Gazebo with the specified world
     gazebo_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(ros_gz_sim, 'launch', 'gz_sim.launch.py')
@@ -42,12 +45,14 @@ def generate_launch_description():
         launch_arguments={'gz_args': ['-r ', world]}.items()
     )
  
+    # Set the GZ_SIM_RESOURCE_PATH environment variable to include the TurtleBot3 models
     set_env_vars_resources = AppendEnvironmentVariable(
             'GZ_SIM_RESOURCE_PATH',
             os.path.join(
                 get_package_share_directory('turtlebot3_gazebo'),
                 'models'))
    
+    # Bridge the /clock topic from Gazebo to ROS 2
     clock_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -57,7 +62,11 @@ def generate_launch_description():
         output='screen'
     )
  
+
+
                                 # ROBOT1
+    
+    # Start the spawn_tb3.launch.py for robot1
     robot1_spawn_cmd = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(launch_file_dir, 'spawn_tb3.launch.py')
@@ -69,6 +78,7 @@ def generate_launch_description():
             }.items()
         )
     
+    # Relay the /robot1/tf topic to the global /tf topic
     robot1_tf_relay = Node(
         package='topic_tools',
         executable='relay',
@@ -78,6 +88,7 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Relay the /robot1/tf_static topic to the global /tf_static topic
     robot1_tf_static_relay = Node(
         package='topic_tools',
         executable='relay',
@@ -87,6 +98,7 @@ def generate_launch_description():
         output='screen'
     )
    
+    # Publish a static transform from the world frame to robot1's map frame
     robot1_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -96,19 +108,11 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot1/tf_static')]
     )
 
-    # robot1_random_goal = Node(
-    #     package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
-    #     executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
-    #     name='random_goal_selector',
-    #     namespace=ns_r1,
-    #     output='screen',
-    #     parameters=[{'use_sim_time': use_sim_time}]
-    # )
-
-
 
 
                                 # ROBOT2
+
+    # Start the spawn_tb3.launch.py for robot2
     robot2_spawn_cmd = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(launch_file_dir, 'spawn_tb3.launch.py')
@@ -120,6 +124,7 @@ def generate_launch_description():
             }.items()
         )
     
+    # Relay the /robot2/tf topic to the global /tf topic
     robot2_tf_relay = Node(
         package='topic_tools',
         executable='relay',
@@ -129,6 +134,7 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Relay the /robot2/tf_static topic to the global /tf_static topic
     robot2_tf_static_relay = Node(
         package='topic_tools',
         executable='relay',
@@ -138,6 +144,7 @@ def generate_launch_description():
         output='screen'
     )
    
+    # Publish a static transform from the world frame to robot2's map frame
     robot2_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -147,20 +154,12 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot2/tf_static')]
     )
 
-    # robot2_random_goal = Node(
-    #     package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
-    #     executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
-    #     name='random_goal_selector',
-    #     namespace=ns_r2,
-    #     output='screen',
-    #     parameters=[{'use_sim_time': use_sim_time}]
-    # )
-
-
-
+    
 
 
                                 # ROBOT3
+
+    # Start the spawn_tb3.launch.py for robot3
     robot3_spawn_cmd = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(launch_file_dir, 'spawn_tb3.launch.py')
@@ -172,6 +171,7 @@ def generate_launch_description():
             }.items()
         )
     
+    # Relay the /robot3/tf topic to the global /tf topic
     robot3_tf_relay = Node(
         package='topic_tools',
         executable='relay',
@@ -181,6 +181,7 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Relay the /robot3/tf_static topic to the global /tf_static topic
     robot3_tf_static_relay = Node(
         package='topic_tools',
         executable='relay',
@@ -190,6 +191,7 @@ def generate_launch_description():
         output='screen'
     )
    
+    # Publish a static transform from the world frame to robot3's map frame
     robot3_tf_publisher = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -199,15 +201,8 @@ def generate_launch_description():
         remappings=[('/tf_static', '/robot3/tf_static')]
     )
 
-    # robot3_random_goal = Node(
-    #     package='multirobot_mapping', # Sostituisci col nome del tuo pacchetto
-    #     executable='goal_sel2', # Sostituisci con l'entry point registrato nel setup.py
-    #     name='random_goal_selector',
-    #     namespace=ns_r3,
-    #     output='screen',
-    #     parameters=[{'use_sim_time': use_sim_time}]
-    # )
 
+    # Launch RViz with the specified configuration file
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -217,6 +212,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
+    # Launch the map merger node with the specified parameters
     map_merge_node = Node(
         package='multirobot_mapping',
         executable='map_merger',  
@@ -233,6 +229,7 @@ def generate_launch_description():
         }]
     )
 
+    # Launch the swarm exploration 2 node with the specified parameters
     swarm_explorer2_node = Node(
         package='multirobot_mapping', 
         executable='swarm_ex2', 
@@ -244,41 +241,23 @@ def generate_launch_description():
 
     ld = LaunchDescription()
  
-    # # Add the commands to the launch description
-    # ld.add_action(set_env_vars_resources)
-    # ld.add_action(gazebo_cmd)
-    # ld.add_action(clock_bridge)
-    # ld.add_action(robot1_spawn_cmd)
-    # ld.add_action(robot1_tf_relay)
-    # ld.add_action(robot1_tf_static_relay)
-    # ld.add_action(robot1_tf_publisher)
-    # ld.add_action(robot2_spawn_cmd)
-    # ld.add_action(robot2_tf_relay)
-    # ld.add_action(robot2_tf_static_relay)
-    # ld.add_action(robot2_tf_publisher)
-    # ld.add_action(robot3_spawn_cmd)
-    # ld.add_action(robot3_tf_relay)
-    # ld.add_action(robot3_tf_static_relay)
-    # ld.add_action(robot3_tf_publisher)
-    # ld.add_action(rviz_node)
-    # return ld
-
+    # Declare the launch options
     ld.add_action(set_env_vars_resources)
     ld.add_action(gazebo_cmd)
     ld.add_action(clock_bridge)
    
-    # Fase 2: Aspetta 5 secondi che Gazebo si carichi, poi spawna TUTTI i robot insieme
+    # Delay the spawning of all robots to ensure Gazebo is fully initialized
     robots_spawn_delay = TimerAction(
         period=5.0,
         actions=[
-            robot1_spawn_cmd, robot1_tf_relay, robot1_tf_static_relay, robot1_tf_publisher, #robot1_random_goal,
-            robot2_spawn_cmd, robot2_tf_relay, robot2_tf_static_relay, robot2_tf_publisher, #robot2_random_goal,
-            robot3_spawn_cmd, robot3_tf_relay, robot3_tf_static_relay, robot3_tf_publisher, #robot3_random_goal,
+            robot1_spawn_cmd, robot1_tf_relay, robot1_tf_static_relay, robot1_tf_publisher,
+            robot2_spawn_cmd, robot2_tf_relay, robot2_tf_static_relay, robot2_tf_publisher,
+            robot3_spawn_cmd, robot3_tf_relay, robot3_tf_static_relay, robot3_tf_publisher,
         ]
     )
     ld.add_action(robots_spawn_delay)
    
-    # Fase 3: Aspetta 10 secondi dall'avvio iniziale, poi avvia il Map Merger e RViz
+    # Delay the launch of the map merger and RViz nodes to ensure all robots are spawned
     tools_delay = TimerAction(
         period=10.0,
         actions=[
@@ -288,13 +267,14 @@ def generate_launch_description():
     )
     ld.add_action(tools_delay)
 
-    market_delay = TimerAction(
-        period=25.0,
+    # Delay the launch of the swarm exploration node to ensure all robots are spawned and their TF topics are being relayed
+    swarm_delay = TimerAction(
+        period=35.0,
         actions=[
             swarm_explorer2_node
         ]
     )
    
-    ld.add_action(market_delay)
+    ld.add_action(swarm_delay)
 
     return ld
