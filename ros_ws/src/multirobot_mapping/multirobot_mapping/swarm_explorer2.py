@@ -20,47 +20,43 @@ from geometry_msgs.msg import PoseStamped
 from tf2_ros import Buffer, TransformListener, TransformException
 from rclpy.time import Time
 from visualization_msgs.msg import Marker, MarkerArray
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
  
-class SmartSwarmExplorer(Node):
+class DeterministicExplorer(Node):
     def __init__(self):
-        super().__init__('smart_swarm_explorer')
-       
-        if not self.has_parameter('use_sim_time'):
-            self.declare_parameter('use_sim_time', True)
-           
-        qos_profile = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            depth=1
-        )
-        self.merged_map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, qos_profile)
-        self.frontier_marker_pub = self.create_publisher(MarkerArray, '/frontier_markers', 10)
-        self.viz_timer = self.create_timer(1.0, self.visualization_tick)
-        self.tf_buffer = Buffer(rclpy.duration.Duration(seconds=10.0))
+        super().__init__('deterministic_explorer')
+
+        self.merged_map_sub = self.create_subscription(OccupancyGrid,'/map',self.map_callback,10)
+        self.frontier_marker_pub = self.create_publisher(MarkerArray,'/frontier_markers',10)
+
+        # Initialize TF buffer and listener for global transformations
+        self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-       
+
         self.merged_map = None
         self.robots = ['robot1', 'robot2', 'robot3']
+
+        # Initialize a variable necessary for map_callback
         self.initial_trigger_done = False
-       
-        # Variabili per le METRICHE
+
         self.start_time = None
-        self.robot_distances = {robot: 0.0 for robot in self.robots}
-        self.previous_poses_for_dist = {robot: None for robot in self.robots}
-       
-        self.action_clients = {}
-        self.robot_status = {}  
-        self.assigned_goals = {}
-        self.last_robot_poses = {}
-        self.stuck_counters = {}    
-       
-        self.active_goal_handles = {robot: None for robot in self.robots}
-       
-        self.REPULSION_RADIUS = 1.0  
-        # [MODIFICA] Impostato a 12: un ottimo compromesso tra filtraggio del rumore e sensibilità agli spazi.
-        self.MIN_FRONTIER_SIZE = 12
-       
+
+        self.total_distances = {robot: 0.0 for robot in self.robots}
+        self.tracking_last_poses = {robot: None for robot in self.robots}
+        
+        # Initialize a timer to track distances every second
+        self.distance_tracker_timer = self.create_timer(1.0, self.track_distances)
+
+        # Initialize a timer to update frontiers markers every second
+        self.viz_timer = self.create_timer(1.0, self.visualization_tick)
+        
+        # Initialize dictionaries to manage robots
+        self.action_clients = {}    # It will hold the ActionClient for each robot
+        self.robot_status = {}      # It will hold the status of each robot: 'IDLE' or 'NAVIGATING'
+        self.assigned_goals = {}    # It will hold the currently assigned goal for each robot
+        self.last_robot_poses = {}  # It will hold the last known position for each robot
+        self.stuck_counters = {}    # It will hold the counter for each robot to detect if it's stuck
+        
+        # Initialize the robot management dictionaries
         for robot_name in self.robots:
             action_name = f'/{robot_name}/navigate_to_pose'
             self.action_clients[robot_name] = ActionClient(self, NavigateToPose, action_name)
@@ -68,30 +64,31 @@ class SmartSwarmExplorer(Node):
             self.assigned_goals[robot_name] = None
             self.last_robot_poses[robot_name] = None
             self.stuck_counters[robot_name] = 0
- 
-        self.get_logger().info("Smart Swarm Explorer: Smart Targeting per le frontiere attivato.")
+
+        self.get_logger().info(f"\033[94mMultiRobotExplorer node initialized. Waiting for the first merged map and TF tree to be ready...\033[0m")
        
-        self.startup_timer = self.create_timer(2.0, self.startup_monitor)
+        # Initialize a timer to check for robot stalling every 4 seconds
         self.stall_checker_timer = self.create_timer(4.0, self.check_robots_stall)
-        self.watchdog_timer = self.create_timer(5.0, self.exploration_watchdog)
-       
-        # Timer dedicato per calcolare accuratamente la distanza percorsa ogni secondo
-        self.distance_timer = self.create_timer(1.0, self.update_distances)
-       
+
+        # Initialize variables for the exploration watchdog
         self.no_frontiers_ticks = 0
         self.max_ticks_to_stop = 6
- 
+
+        # Initialize a timer to monitor exploration progress every 5 seconds
+        self.watchdog_timer = self.create_timer(5.0, self.exploration_watchdog)
+
+
+    # Functions to update frontiers markers
     def visualization_tick(self):
-        # Pubblica SEMPRE i candidati, anche quando nessun robot è IDLE:
-        # così vedi il bug (puntini raggruppati lontano) indipendentemente dal dispatch.
         if self.merged_map is None:
             return
         self.publish_frontier_markers(self.extract_frontiers())
  
-    def publish_frontier_markers(self, centroids):
+
+    def publish_frontier_markers(self, candidate_points):
         marker_array = MarkerArray()
     
-        # --- Pulizia dei marker del ciclo precedente ---
+        # Clear all the old frontiers markers
         clear = Marker()
         clear.header.frame_id = 'world'
         clear.action = Marker.DELETEALL
@@ -99,8 +96,8 @@ class SmartSwarmExplorer(Node):
     
         now = self.get_clock().now().to_msg()
     
-        # --- Candidati di frontiera: sfere CIANO ---
-        for idx, (fx, fy) in enumerate(centroids):
+        # Show the candidates frontiers points (Cyan Points)
+        for idx, (fx, fy) in enumerate(candidate_points):
             m = Marker()
             m.header.frame_id = 'world'
             m.header.stamp = now
@@ -112,16 +109,16 @@ class SmartSwarmExplorer(Node):
             m.pose.position.y = float(fy)
             m.pose.position.z = 0.1
             m.pose.orientation.w = 1.0
-            m.scale.x = m.scale.y = m.scale.z = 0.2
+            m.scale.x = m.scale.y = m.scale.z = 0.1
             m.color.r, m.color.g, m.color.b, m.color.a = 0.0, 1.0, 1.0, 0.9
             marker_array.markers.append(m)
     
-        # --- Goal assegnati: sfere ROSSE grandi + etichetta col nome robot ---
         gid = 0
         for robot, goal in self.assigned_goals.items():
             if goal is None:
                 continue
-    
+
+            # Show the goals frontiers points (Red Points)
             m = Marker()
             m.header.frame_id = 'world'
             m.header.stamp = now
@@ -133,10 +130,11 @@ class SmartSwarmExplorer(Node):
             m.pose.position.y = float(goal[1])
             m.pose.position.z = 0.15
             m.pose.orientation.w = 1.0
-            m.scale.x = m.scale.y = m.scale.z = 0.35
+            m.scale.x = m.scale.y = m.scale.z = 0.2
             m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.0, 0.0, 1.0
             marker_array.markers.append(m)
-    
+
+            # Show the robots' names on the goals points
             text = Marker()
             text.header.frame_id = 'world'
             text.header.stamp = now
@@ -148,52 +146,55 @@ class SmartSwarmExplorer(Node):
             text.pose.position.y = float(goal[1])
             text.pose.position.z = 0.5
             text.pose.orientation.w = 1.0
-            text.scale.z = 0.3   # per il testo conta solo scale.z
+            text.scale.z = 0.15   
             text.color.r = text.color.g = text.color.b = text.color.a = 1.0
             text.text = robot
             marker_array.markers.append(text)
     
         self.frontier_marker_pub.publish(marker_array)
 
-    def startup_monitor(self):
-        if self.merged_map is None:
-            self.get_logger().warn("⏳ In attesa della mappa globale sul topic '/map'...", throttle_duration_sec=4.0)
-            return
-        if not self.initial_trigger_done:
-            try:
-                if self.tf_buffer.can_transform('world', f'{self.robots[0]}/base_footprint', rclpy.time.Time()):
-                    self.initial_trigger_done = True
-                    # Registriamo l'inizio del tempo di simulazione (Clock di Gazebo)
-                    self.start_time = self.get_clock().now()
-                    self.get_logger().info("✅ Mappa e TF ('world' -> base_footprint) ricevuti! Inizio orchestrazione...")
-                    self.startup_timer.destroy()
-                    self.orchestrator_loop()
-                else:
-                    self.get_logger().warn("⏳ Mappa ricevuta, ma in attesa dell'albero TF da 'world' ai robot...", throttle_duration_sec=4.0)
-            except Exception:
-                pass
- 
+
+    # Callback function to handle incoming merged map messages
     def map_callback(self, msg):
         self.merged_map = msg
-        if self.initial_trigger_done:
-            self.orchestrator_loop()
+        
+        # Check if this is the first merged map received and if the global TF tree is ready
+        if not self.initial_trigger_done:
+            if self.tf_buffer.can_transform('world', f'{self.robots[0]}/base_footprint', rclpy.time.Time()):
+                self.initial_trigger_done = True
+
+                # Save the start time of the exploration
+                self.start_time = self.get_clock().now()
+                self.get_logger().info(f"\033[94mFirst merged map received and TF tree is ready! Starting goal assignment...\033[0m")
+                self.coordinator()
+
+            else:
+                self.get_logger().info(f"\033[93mMap received, but the TF tree is not yet fully connected. Waiting...\033[0m",
+                                       throttle_duration_sec=2.0)
  
-    def update_distances(self):
-        """Calcola e accumula la distanza percorsa da ciascun robot."""
+
+    # Function to track the distance traveled by each robot
+    def track_distances(self):
         if not self.initial_trigger_done:
             return
-           
+
         for robot in self.robots:
-            pose = self.get_robot_pose(robot)
-            if pose[0] is not None:
-                curr_pose = (pose[0], pose[1])
-                if self.previous_poses_for_dist[robot] is not None:
-                    dist = self.euclidean_distance(curr_pose, self.previous_poses_for_dist[robot])
-                    # Filtro anti-rumore: consideriamo solo movimenti maggiori di 5 millimetri
-                    if dist > 0.005:
-                        self.robot_distances[robot] += dist
-                self.previous_poses_for_dist[robot] = curr_pose
+            current_x, current_y = self.get_robot_pose(robot)
+            if current_x is None or current_y is None:
+                continue
+            
+            last_pose = self.tracking_last_poses[robot]
+            if last_pose is not None:
+                dist = self.euclidean_distance((current_x, current_y), last_pose)
+
+                # Exclude very small movements
+                if dist > 0.01: 
+                    self.total_distances[robot] += dist
+                    
+            self.tracking_last_poses[robot] = (current_x, current_y)
  
+
+    # Function to convert Euler angles to quaternion
     def get_quaternion_from_euler(self, roll, pitch, yaw):
         qx = math.sin(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) - math.cos(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
         qy = math.cos(roll/2) * math.sin(pitch/2) * math.cos(yaw/2) + math.sin(roll/2) * math.cos(pitch/2) * math.sin(yaw/2)
@@ -201,65 +202,87 @@ class SmartSwarmExplorer(Node):
         qw = math.cos(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) + math.sin(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)
         return [qx, qy, qz, qw]
        
-    def get_yaw_from_quaternion(self, q):
-        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
-        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
-        return math.atan2(siny_cosp, cosy_cosp)
- 
+
+    # Function to calculate the Euclidean distance between two points
     def euclidean_distance(self, p1, p2):
         return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
  
+
+    # Function to get the robot's current pose in the global world frame
     def get_robot_pose(self, robot_name):
         try:
-            trans = self.tf_buffer.lookup_transform('world', f'{robot_name}/base_footprint', rclpy.time.Time())
-            x = trans.transform.translation.x
-            y = trans.transform.translation.y
-            yaw = self.get_yaw_from_quaternion(trans.transform.rotation)
-            return x, y, yaw
-        except TransformException:
-            return None, None, None
+            now = rclpy.time.Time()
+            trans = self.tf_buffer.lookup_transform(
+                'world', 
+                f'{robot_name}/base_footprint', 
+                now
+            )
+            global_x = trans.transform.translation.x
+            global_y = trans.transform.translation.y
+            return global_x, global_y
+            
+        except TransformException as e:
+            self.get_logger().error(f"\033[91mPose not available for {robot_name}: {str(e)}\033[0m", throttle_duration_sec=5.0)
+            return None, None
  
-    def compute_path_cost(self, start_w, goal_w, other_robots_poses):
+
+    # Function to compute the path cost from a starting point to a goal point considering the other robots positions 
+    def compute_path_cost(self, start_w, goal_w, other_robots_positions):
         if self.merged_map is None: return float('inf')
- 
+
+        # Extract map dimensions and resolution from the merged map
         res = self.merged_map.info.resolution
         ox = self.merged_map.info.origin.position.x
         oy = self.merged_map.info.origin.position.y
         width = self.merged_map.info.width
         height = self.merged_map.info.height
        
+        # Compute the pixels referred to the start and goal coordinates
         sx, sy = int((start_w[0] - ox) / res), int((start_w[1] - oy) / res)
         gx, gy = int((goal_w[0] - ox) / res), int((goal_w[1] - oy) / res)
        
         if not (0 <= sx < width and 0 <= sy < height and 0 <= gx < width and 0 <= gy < height):
             return float('inf')
  
+        # Reshape the 1D map data array into a 2D grid 
         grid = np.array(self.merged_map.data, dtype=np.int8).reshape((height, width))
-        other_pixels = [(int((rx - ox)/res), int((ry - oy)/res)) for rx, ry in other_robots_poses]
+
+        # Compute the pixels referred to the other robots coordinates
+        other_pixels = [(int((rx - ox)/res), int((ry - oy)/res)) for rx, ry in other_robots_positions]
+        
+        # Define a social radius converted to pixels to keep robots apart
         social_radius_px = 1.0 / res
  
-        open_set = []
-        heapq.heappush(open_set, (0, (sx, sy)))
+        # Initialize the frontier set for the A* algorithm and set the starting cost
+        frontier_set = []
+        heapq.heappush(frontier_set, (0, (sx, sy)))
         g_score = {(sx, sy): 0}
         directions = [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (-1,1), (1,-1), (1,1)]
        
-        while open_set:
-            _, current = heapq.heappop(open_set)
+        while frontier_set:
+            _, current = heapq.heappop(frontier_set)
+
+            # If the goal is reached, return the accumulated path cost converted back to meters
             if current == (gx, gy): return g_score[current] * res
            
             for dx, dy in directions:
                 nx, ny = current[0] + dx, current[1] + dy
+
                 if 0 <= nx < width and 0 <= ny < height:
                     cell_val = grid[ny, nx]
-                   
+                    
+                    # Skip the cell if it is an obstacle
                     if cell_val == 100:
                         continue
                    
+                    # Calculate the base step cost
                     step_cost = math.sqrt(dx**2 + dy**2)
                    
+                    # Heavily penalize moving through unknown space to prioritize known clear paths
                     if cell_val == -1:
                         step_cost *= 20.0
                    
+                    # Add a social cost penalty if the cell is within the social radius of other robots
                     for orx, ory in other_pixels:
                         if math.sqrt((nx - orx)**2 + (ny - ory)**2) < social_radius_px:
                             step_cost += 10.0
@@ -267,65 +290,101 @@ class SmartSwarmExplorer(Node):
                            
                     tentative_g = g_score[current] + step_cost
                     neighbor = (nx, ny)
-                   
+                    
+                    # Update the path cost if a cheaper path is found, and push to the frontier set
                     if neighbor not in g_score or tentative_g < g_score[neighbor]:
                         g_score[neighbor] = tentative_g
-                        h = math.sqrt((nx - gx)**2 + (ny - gy)**2)
-                        heapq.heappush(open_set, (tentative_g + h, neighbor))
+
+                        # Compute the Euclidean heuristic from the neighbor to the goal
+                        h = self.euclidean_distance([nx, ny], [gx, gy])
+                        heapq.heappush(frontier_set, (tentative_g + h, neighbor))
+
         return float('inf')
  
+
+    # Function to extract the frontiers points in the merged map
     def extract_frontiers(self):
         if self.merged_map is None: return []
     
+        # Extract map dimensions and resolution from the merged map
         width  = self.merged_map.info.width
         height = self.merged_map.info.height
         res = self.merged_map.info.resolution
         ox  = self.merged_map.info.origin.position.x
         oy  = self.merged_map.info.origin.position.y
-    
-        map_data = np.array(self.merged_map.data, dtype=np.int8).reshape((height, width))
+
+        # Set the minimum size of accettable frontier
+        min_frontier_size = 12
+
+        # Reshape the 1D map data array into a 2D grid
+        map_grid = np.array(self.merged_map.data, dtype=np.int8).reshape((height, width))
+
+        # Define a 3x3 structuring element for morphological operations (8-connectivity)
         struct = ndimage.generate_binary_structure(2, 2)
-        frontier_mask = (map_data == 0) & ndimage.binary_dilation((map_data == -1), structure=struct)
-        dilated_obstacles = ndimage.binary_dilation((map_data == 100), iterations=7)
+
+        # Identify raw frontiers (free space adjacent to unknown space)
+        frontier_mask = (map_grid == 0) & ndimage.binary_dilation((map_grid == -1), structure=struct)
+
+        # Increase the thickness of the obstacles to avoid extracting frontiers too close to walls
+        dilated_obstacles = ndimage.binary_dilation((map_grid == 100), iterations=7)
+
+        # Remove dilated_obstacles from the frontier_mask 
         frontier_mask = frontier_mask & (~dilated_obstacles)
     
+        # Group contiguous frontier pixels into separate labeled clusters
         labeled_array, num_features = ndimage.label(frontier_mask, structure=struct)
         centroids = []
     
         for i in range(1, num_features + 1):
             y_idx, x_idx = np.where(labeled_array == i)
             cluster_size = len(x_idx)
-            if cluster_size < self.MIN_FRONTIER_SIZE:
+
+            # Discard clusters that are too small to be considered real frontiers
+            if cluster_size < min_frontier_size:
                 continue
     
-            # numero di punti proporzionale alla lunghezza della frontiera (non più cap fisso a 4)
+            # Compute a proportional number of target points to assign based on the cluster length
             num_points = max(1, min(30, cluster_size // 20))
     
             if num_points == 1:
-                # centroide vero, agganciato al pixel di frontiera più vicino
+                # Compute the centroid of the cluster
                 mx, my = x_idx.mean(), y_idx.mean()
+
+                # Find the actual frontier pixel closest to the mathematical centroid to avoid targeting walls
                 j = np.argmin((x_idx - mx)**2 + (y_idx - my)**2)
                 reps = [(int(x_idx[j]), int(y_idx[j]))]
             else:
-                # split GEOMETRICO: ordino lungo l'asse più lungo del cluster e taglio in chunk
+                # If the frontier is long, split it along its major axis
                 span_x = x_idx.max() - x_idx.min()
                 span_y = y_idx.max() - y_idx.min()
+
+                # Determine the longest axis to sort the pixels
                 key = x_idx if span_x >= span_y else y_idx
                 order = np.argsort(key)
     
                 reps = []
                 for chunk in np.array_split(order, num_points):
                     cxs, cys = x_idx[chunk], y_idx[chunk]
+
+                    # Compute the centroid of each chunk
                     mx, my = cxs.mean(), cys.mean()
+
+                    # Find the actual frontier pixel closest to the chunk's centroid
                     j = np.argmin((cxs - mx)**2 + (cys - my)**2)  # pixel reale, mai in mezzo a un muro
                     reps.append((int(cxs[j]), int(cys[j])))
-    
+
+            # Convert the selected pixel coordinates back to the global map reference frame
             for cx, cy in reps:
                 centroids.append((ox + cx * res, oy + cy * res))
     
         return centroids
  
-    def orchestrator_loop(self):
+
+    # Function to coordinate the assignment of frontiers
+    def coordinator(self):
+        # 
+        repulsion_radius = 1.0
+
         if not self.initial_trigger_done or self.merged_map is None:
             return
  
@@ -360,7 +419,7 @@ class SmartSwarmExplorer(Node):
             if p[0] is not None: all_poses.append((p[0], p[1]))
  
         for robot in idle_robots:
-            rx, ry, _ = self.get_robot_pose(robot)
+            rx, ry = self.get_robot_pose(robot)
             if rx is None: continue
  
             best_frontier = None
@@ -377,7 +436,7 @@ class SmartSwarmExplorer(Node):
                
                 cost = path_cost
                 for ax, ay in active_goals:
-                    if self.euclidean_distance((fx, fy), (ax, ay)) < self.REPULSION_RADIUS:
+                    if self.euclidean_distance((fx, fy), (ax, ay)) < repulsion_radius:
                         cost += 5000.0  
  
                 if cost < min_cost:
@@ -394,154 +453,198 @@ class SmartSwarmExplorer(Node):
         for robot_name, gx, gy in ready_to_dispatch:
             self.dispatch_robot(robot_name, gx, gy)
  
+
+    # Function to dispatch a robot to a specific goal
     def dispatch_robot(self, robot_name, x, y):
-        if not self.action_clients[robot_name].wait_for_server(timeout_sec=1.0): return
-       
-        pose_world = PoseStamped()
-        pose_world.header.frame_id = 'world'
-        pose_world.header.stamp = Time().to_msg()
-        pose_world.pose.position.x = float(x)
-        pose_world.pose.position.y = float(y)
-       
+        # Check if the action server for the robot is ready
+        if not self.action_clients[robot_name].wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn(f"\033[93m[{robot_name}] Action server not ready. Cannot dispatch goal.\033[0m")
+            return
+        
+        goal_msg = NavigateToPose.Goal()
+        goal_msg.pose.header.frame_id = 'world'
+        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+
+        goal_msg.pose.pose.position.x = x
+        goal_msg.pose.pose.position.y = y
+        goal_msg.pose.pose.position.z = 0.0
+
         last_pose = self.last_robot_poses.get(robot_name)
         rx = last_pose[0] if last_pose is not None else 0.0
         ry = last_pose[1] if last_pose is not None else 0.0
         yaw = math.atan2(y - ry, x - rx)
-       
+
+        # Assign a random orientation to the robot for exploration purposes
         q = self.get_quaternion_from_euler(0.0, 0.0, yaw)
-        pose_world.pose.orientation.x = q[0]
-        pose_world.pose.orientation.y = q[1]
-        pose_world.pose.orientation.z = q[2]
-        pose_world.pose.orientation.w = q[3]
+        goal_msg.pose.pose.orientation.x = q[0]
+        goal_msg.pose.pose.orientation.y = q[1]
+        goal_msg.pose.pose.orientation.z = q[2]
+        goal_msg.pose.pose.orientation.w = q[3]
+
+        self.robot_status[robot_name] = 'NAVIGATING'
+        self.assigned_goals[robot_name] = (x, y)
+        self.get_logger().info(f"\033[94m[{robot_name}] Dispatching to goal: ({x:.2f}, {y:.2f})\033[0m")
+        
+        # Send the goal asynchronously and set up a callback for the response
+        future = self.action_clients[robot_name].send_goal_async(goal_msg)
+        future.add_done_callback(lambda fut, r=robot_name: self.goal_response_callback(fut, r))
+
  
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                f'{robot_name}/map',
-                'world',
-                Time(),
-                rclpy.duration.Duration(seconds=1.0))
-           
-            pose_local = tf2_geometry_msgs.do_transform_pose(pose_world.pose, transform)
-           
-            goal_msg = NavigateToPose.Goal()
-            goal_msg.pose.header.frame_id = f'{robot_name}/map'
-            goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-            goal_msg.pose.pose = pose_local
- 
-            self.robot_status[robot_name] = 'NAVIGATING'
-            self.get_logger().info(f"🎯 [{robot_name}] PARTITO! Goal assegnato: X={pose_local.position.x:.2f}, Y={pose_local.position.y:.2f}")
-           
-            future = self.action_clients[robot_name].send_goal_async(goal_msg)
-            future.add_done_callback(lambda fut, r=robot_name: self.goal_response_callback(fut, r))
-           
-        except TransformException as ex:
-            self.get_logger().warn(f"[{robot_name}] Attesa TF per trasformazione: {ex}")
-            return
- 
+    # Function to check if any robot is stuck and force a goal change if necessary
     def check_robots_stall(self):
         for robot in self.robots:
             if self.robot_status[robot] == 'NAVIGATING':
-                current_x, current_y, current_yaw = self.get_robot_pose(robot)
-                if current_x is None: continue
-               
-                last_pose = self.last_robot_poses.get(robot)
+                current_x, current_y = self.get_robot_pose(robot)
+                
+                if current_x is None or current_y is None:
+                    continue
+                
+                last_pose = self.last_robot_poses[robot]
+                
                 if last_pose is not None:
-                    last_x, last_y, last_yaw = last_pose
-                    dist_moved = self.euclidean_distance((current_x, current_y), (last_x, last_y))
-                   
-                    yaw_diff = abs(math.atan2(math.sin(current_yaw - last_yaw), math.cos(current_yaw - last_yaw)))
-                   
-                    if dist_moved < 0.10 and yaw_diff < 0.25:
-                        self.stuck_counters[robot] += 1
-                        if self.stuck_counters[robot] >= 2:
-                            self.get_logger().warn(f"🚨 [{robot}] FERMO! Tronco le manovre di recovery del Nav2 e avvio il cooldown...")
-                            self.stuck_counters[robot] = 0
-                           
-                            handle = self.active_goal_handles.get(robot)
-                            if handle is not None:
-                                try:
-                                    handle.cancel_goal_async()
-                                except Exception:
-                                    pass
-                            else:
-                                self.robot_status[robot] = 'IDLE'
-                                self.assigned_goals[robot] = None
-                                self.orchestrator_loop()
-                            continue
-                    else:
-                        self.stuck_counters[robot] = 0
-                self.last_robot_poses[robot] = (current_x, current_y, current_yaw)
+                    # Calculate the distance moved since the last check
+                    dist_moved = self.euclidean_distance((current_x, current_y), last_pose)
+                    
+                    # If the robot has moved less than 0.15 meters, consider it stuck and force a goal change
+                    if dist_moved < 0.15:
+                        self.get_logger().error(f"\033[91m[{robot}] appears to be stuck. Forcing a new goal assignment.\033[0m")
+                        self.reset_stuck_robot(robot)
+                        continue 
+                
+                self.last_robot_poses[robot] = (current_x, current_y)
+            else:
+                self.last_robot_poses[robot] = None
+    
+    # Function to reset the state of a stuck robot and request a new global goal
+    def reset_stuck_robot(self, robot_name):
+        # Reset the robot's state to IDLE and clear its assigned goal
+        self.robot_status[robot_name] = 'IDLE'
+        self.assigned_goals[robot_name] = None
+        self.stuck_counters[robot_name] = 0
+        self.last_robot_poses[robot_name] = None
+        # Request a new global goal for the robot by calling the coordinator
+        self.coordinator()
  
+    # Callback function to handle the response from the action server when a goal is sent
     def goal_response_callback(self, future, robot_name):
         goal_handle = future.result()
         if not goal_handle.accepted:
+            self.get_logger().warn(f"\033[93m[{robot_name}] Goal rejected by the action server. Applying cooldown...\033[0m")
             timer = []
-            # Riduciamo l'attesa per i goal rifiutati
-            timer.append(self.create_timer(0.2, lambda: self.cooldown_wrapper(robot_name, timer)))
+            timer.append(self.create_timer(2.0, lambda: self.cooldown_wrapper(robot_name, timer)))
             return
-           
-        self.active_goal_handles[robot_name] = goal_handle
-       
+
+        # If the goal is accepted, set up a callback to handle the result when the robot reaches its destination or fails
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(lambda fut, r=robot_name: self.get_result_callback(fut, r))
- 
+
+    # Callback function to handle the result of the navigation goal
     def get_result_callback(self, future, robot_name):
         status = future.result().status
+        
         if status == GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info(f"\033[92m[{robot_name}] Navigation succeeded! Ready for a new frontier.\033[0m")
             self.robot_status[robot_name] = 'IDLE'
             self.assigned_goals[robot_name] = None
-            self.orchestrator_loop()
+            self.coordinator()
         else:
+            self.get_logger().warn(f"\033[91m[{robot_name}] Navigation failed. Applying cooldown...\033[0m")
             self.assigned_goals[robot_name] = None
             timer = []
-            # [FIX LENTEZZA] Riduciamo l'attesa di riassegnazione da 2.0s a 0.2s!
             timer.append(self.create_timer(0.2, lambda: self.cooldown_wrapper(robot_name, timer)))
  
+
+    # Function to handle the cooldown period after a robot fails to reach its goal
     def cooldown_wrapper(self, robot_name, timer_list):
-        if timer_list and timer_list[0]: timer_list[0].destroy()
+        if timer_list and timer_list[0]:
+            timer_list[0].destroy() 
+        
         self.robot_status[robot_name] = 'IDLE'
-        self.orchestrator_loop()
+        self.get_logger().info(f"\033[94m[{robot_name}] Cooldown complete. Ready for a new frontier.\033[0m")
+        self.coordinator()
  
+    # Function to monitor the exploration process and determine if it should be terminated
     def exploration_watchdog(self):
-        if self.merged_map is None: return
-        if all(status != 'NAVIGATING' for status in self.robot_status.values()):
-            if len(self.extract_frontiers()) == 0:
-                self.no_frontiers_ticks += 1
-                if self.no_frontiers_ticks >= self.max_ticks_to_stop:
-                    self.terminate_exploration()
-            else:
-                self.no_frontiers_ticks = 0
-                self.orchestrator_loop()
+        if self.merged_map is None:
+            return 
+            
+        # Check if all robots are idle
+        all_robots_idle = all(status != 'NAVIGATING' for status in self.robot_status.values())
+
+        # Check if all robots are idle and there are no frontiers available
+        if all_robots_idle and not len(self.extract_frontiers()) == 0:
+            # Increment the counter for ticks with no frontiers
+            self.no_frontiers_ticks += 1
+            self.get_logger().info(f"\033[94mNo frontiers available. Shutting down... ({self.no_frontiers_ticks}/{self.max_ticks_to_stop})\033[0m")
+            
+            # If the number of ticks with no frontiers exceeds the maximum allowed, terminate the exploration
+            if self.no_frontiers_ticks >= self.max_ticks_to_stop:
+                self.terminate_exploration()
+        else:
+            # Reset the counter for ticks with no frontiers if there are frontiers available or robots are navigating
+            self.no_frontiers_ticks = 0
+            
+            # If there are frontiers available and any robot is idle, call the coordinator to assign new goals
+            if len(self.extract_frontiers()) == 0 and any(status == 'IDLE' for status in self.robot_status.values()):
+                self.coordinator()
  
+    # Function to terminate the exploration process, save the merged map, print metrics, and shut down the node
     def terminate_exploration(self):
-        # --- STAMPA DELLE METRICHE FINALI ---
         if self.start_time is not None:
-            # Calcolo del tempo trascorso e della distanza totale
-            elapsed_duration = self.get_clock().now() - self.start_time
-            elapsed_seconds = elapsed_duration.nanoseconds / 1e9
-            total_dist = sum(self.robot_distances.values())
-           
-            self.get_logger().info("==================================================")
-            self.get_logger().info("📊 REPORT METRICHE ESPLORAZIONE:")
-            self.get_logger().info(f"⏱️  Tempo di simulazione (Clock): {elapsed_seconds:.2f} secondi")
+            end_time = self.get_clock().now()
+            # Calculate the total duration of the exploration
+            total_duration = end_time - self.start_time 
+            
+            duration_secs = total_duration.nanoseconds / 1e9
+            mins = int(duration_secs // 60)
+            secs = int(duration_secs % 60)
+            
+            # Calculate the total distance traveled by the swarm of robots
+            total_swarm_distance = sum(self.total_distances.values())
+            
+            self.get_logger().info(f"\033[92m=====================================================\033[0m")
+            self.get_logger().info(f"\033[92mTotal duration: {mins} min and {secs} sec ({duration_secs:.2f} s)\033[0m")
+            self.get_logger().info(f"\033[92mDistance traveled:\033[0m")
             for robot in self.robots:
-                self.get_logger().info(f"📏 Distanza percorsa da [{robot}]: {self.robot_distances[robot]:.2f} metri")
-            self.get_logger().info(f"📈 Distanza TOTALE dello sciame:  {total_dist:.2f} metri")
-            self.get_logger().info("==================================================")
- 
-        self.get_logger().info("✅ ESPLORAZIONE COMPLETATA! Salvataggio mappa in corso...")
+                self.get_logger().info(f"\033[92m   - {robot}: {self.total_distances[robot]:.2f} meters\033[0m")
+            self.get_logger().info(f"\033[92mTotal swarm distance: {total_swarm_distance:.2f} meters\033[0m")
+            self.get_logger().info(f"\033[92m=====================================================\033[0m")
+
+        self.get_logger().info(f"\033[92mExploration Complete. All accessible areas have been mapped.\033[0m")
+        self.get_logger().info(f"\033[94mInitiating automatic map saving...\033[0m")
+        
+        # Use subprocess to call the ROS 2 map_saver_cli command to save the merged map
         try:
-            subprocess.run(["ros2", "run", "nav2_map_server", "map_saver_cli", "-f", "smart_mappa",
-                            "--ros-args", "-p", "use_sim_time:=true", "-p", "map_subscribe_transient_local:=true"], check=True)
-        except subprocess.CalledProcessError: pass
+            subprocess.run(
+                [
+                    "ros2", "run", "nav2_map_server", "map_saver_cli", 
+                    "-f", "deterministic_swarm_map", 
+                    "--ros-args", 
+                    "-p", "use_sim_time:=true",
+                    "-p", "map_subscribe_transient_local:=true"
+                ],
+                check=True
+            )
+            self.get_logger().info(f"\033[92mMap 'deterministic_swarm_map.yaml' and '.pgm' saved successfully!\033[0m")
+        except subprocess.CalledProcessError as e:
+            self.get_logger().error(f"\033[91mCritical error occurred while saving the map: {e}\033[0m")
+            
+        self.get_logger().info(f"\033[94mClosing Swarm Explorer module to free up simulation resources.\033[0m")
+        
+        # Shutdown the ROS 2 node and exit the program
         sys.exit(0)
- 
+
+
 def main(args=None):
     rclpy.init(args=args)
-    node = SmartSwarmExplorer()
-    try: rclpy.spin(node)
-    except KeyboardInterrupt: pass
-    finally: node.destroy_node(); rclpy.shutdown()
+    node = DeterministicExplorer()
+    try: 
+        rclpy.spin(node)
+    except KeyboardInterrupt: 
+        pass
+    finally: 
+        node.destroy_node(); 
+        rclpy.shutdown()
  
 if __name__ == '__main__':
     main()

@@ -16,9 +16,9 @@ from nav2_msgs.action import NavigateToPose
 from tf2_ros import Buffer, TransformListener, TransformException
 
 
-class MultiRobotExplorer(Node):
+class StochasticExplorer(Node):
     def __init__(self):
-        super().__init__('multi_robot_explorer')
+        super().__init__('stochastic_explorer')
         
         self.merged_map_sub = self.create_subscription(OccupancyGrid,'/map',self.map_callback,10)
         
@@ -99,7 +99,7 @@ class MultiRobotExplorer(Node):
             
             last_pose = self.tracking_last_poses[robot]
             if last_pose is not None:
-                dist = self.distance((current_x, current_y), last_pose)
+                dist = self.euclidean_distance((current_x, current_y), last_pose)
 
                 # Exclude very small movements
                 if dist > 0.01: 
@@ -118,7 +118,7 @@ class MultiRobotExplorer(Node):
     
 
     # Function to calculate the Euclidean distance between two points
-    def distance(self, p1, p2):
+    def euclidean_distance(self, p1, p2):
         return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
 
@@ -175,7 +175,7 @@ class MultiRobotExplorer(Node):
             for robot in self.robots:
                 rx, ry = self.get_robot_pose(robot)
                 if rx is not None and ry is not None:
-                    d = self.distance((rx, ry), (goal_x, goal_y))
+                    d = self.euclidean_distance((rx, ry), (goal_x, goal_y))
 
                     # Check if the robot is the closest one to the frontier
                     if d < min_dist:
@@ -264,7 +264,7 @@ class MultiRobotExplorer(Node):
                     if robot_poses:
                         for rx, ry in robot_poses.values():
                             # Check if the robot's position is too close to the target (less than 0.4 meters)
-                            if rx is not None and self.distance((target_x, target_y), (rx, ry)) < 0.4:
+                            if rx is not None and self.euclidean_distance((target_x, target_y), (rx, ry)) < 0.4:
                                 too_close_to_robot = True
                                 # Early exit if we find a robot too close to the target
                                 break
@@ -275,7 +275,7 @@ class MultiRobotExplorer(Node):
                     too_close_to_others = False
                     for active_target in active_targets:
                         # Check if the target is too close to any other active target (less than 1.5 meters)
-                        if self.distance((target_x, target_y), active_target) < 1.5:
+                        if self.euclidean_distance((target_x, target_y), active_target) < 1.5:
                             too_close_to_others = True
                             # Early exit if we find an active target too close to the new target
                             break
@@ -329,7 +329,7 @@ class MultiRobotExplorer(Node):
                 
                 if last_pose is not None:
                     # Calculate the distance moved since the last check
-                    dist_moved = self.distance((current_x, current_y), last_pose)
+                    dist_moved = self.euclidean_distance((current_x, current_y), last_pose)
                     
                     # If the robot has moved less than 0.15 meters, consider it stuck and force a goal change
                     if dist_moved < 0.15:
@@ -384,11 +384,9 @@ class MultiRobotExplorer(Node):
         if timer_list and timer_list[0]:
             timer_list[0].destroy() 
         
-        # After the cooldown, if the robot is not navigating, set its status to IDLE and call the coordinator to assign a new goal
-        if self.robot_status[robot_name] != 'NAVIGATING':
-            self.robot_status[robot_name] = 'IDLE'
-            self.get_logger().info(f"\033[94m[{robot_name}] Cooldown complete. Ready for a new frontier.\033[0m")
-            self.coordinator()
+        self.robot_status[robot_name] = 'IDLE'
+        self.get_logger().info(f"\033[94m[{robot_name}] Cooldown complete. Ready for a new frontier.\033[0m")
+        self.coordinator()
 
     # Function to monitor the exploration process and determine if it should be terminated
     def exploration_watchdog(self):
@@ -468,7 +466,7 @@ class MultiRobotExplorer(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MultiRobotExplorer()
+    node = StochasticExplorer()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
