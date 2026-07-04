@@ -9,7 +9,7 @@ The entire stack is fully containerized using Docker, featuring a custom ROS 2 J
 
 * **Multi-Robot Coordination:** Supports both *Deterministic* and *Stochastic* swarm exploration behaviors.
 * **Centralized Map Merging:** Real-time occupancy grid fusion via `map_merger.py` to generate a unified global map.
-* **Dynamic Parameter Management:** Adaptive allocation of namespaced frames and configuration fields at runtime to ensure high scalability.
+* **Dynamic Parameter Management:** Allocation of namespaced frames and configuration fields at runtime to ensure high scalability.
 
 
 ## Repository Structure
@@ -28,7 +28,8 @@ The entire stack is fully containerized using Docker, featuring a custom ROS 2 J
 │       │   └── multirobot_mapping/ # Custom nodes 
 │       └── turtlebot3_gazebo/  # Environment models, 
 │           │                     meshes, and worlds
-│           ├── models/stanza/  # Custom indoor 3D mesh &  │           │                     SDF config.
+│           ├── models/stanza/  # Custom indoor 3D mesh &  
+│           │                     SDF config.
 │           └── worlds/         # Simulation worlds
 ├── run.sh / runmac.sh          # Container launchers
 ├── exec.sh                     # Script to access running 
