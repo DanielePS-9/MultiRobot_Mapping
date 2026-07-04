@@ -32,8 +32,8 @@ setup(
     entry_points={
         'console_scripts': [
             'map_merger = multirobot_mapping.map_merger:main',      # Add map_merger script
-            'swarm_ex = multirobot_mapping.swarm_explorer:main',    # Add swarm_explorer script
-            'swarm_ex2 = multirobot_mapping.swarm_explorer2:main',  # Add swarm_explorer2 script
+            'swarm_ex = multirobot_mapping.stochastic_explorer:main',    # Add swarm_explorer script
+            'swarm_ex2 = multirobot_mapping.deterministic_explorer:main',  # Add swarm_explorer2 script
         ],
     },
 )

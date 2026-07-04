@@ -8,17 +8,14 @@ import sys
 import math
 import numpy as np
 import scipy.ndimage as ndimage
-import heapq 
-import tf2_geometry_msgs  
+import heapq  
 
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.action.client import GoalStatus
 from nav_msgs.msg import OccupancyGrid
 from nav2_msgs.action import NavigateToPose
-from geometry_msgs.msg import PoseStamped
 from tf2_ros import Buffer, TransformListener, TransformException
-from rclpy.time import Time
 from visualization_msgs.msg import Marker, MarkerArray
  
 class DeterministicExplorer(Node):
@@ -44,7 +41,7 @@ class DeterministicExplorer(Node):
         self.tracking_last_poses = {robot: None for robot in self.robots}
         
         # Initialize a timer to track distances every second
-        self.distance_tracker_timer = self.create_timer(1.0, self.track_distance)
+        self.distance_tracker_timer = self.create_timer(1.0, self.track_distances)
 
         # Initialize a timer to update frontiers markers every second
         self.viz_timer = self.create_timer(1.0, self.visualization_tick)
@@ -185,7 +182,7 @@ class DeterministicExplorer(Node):
             
             last_pose = self.tracking_last_poses[robot]
             if last_pose is not None:
-                dist = self.distance((current_x, current_y), last_pose)
+                dist = self.euclidean_distance((current_x, current_y), last_pose)
 
                 # Exclude very small movements
                 if dist > 0.01: 
@@ -211,7 +208,7 @@ class DeterministicExplorer(Node):
     # Function to get the robot's current pose in the global world frame
     def get_robot_pose(self, robot_name):
         try:
-            now = rclpy.time.Time()
+            now = rclpy.time.Time(clock_type=self.get_clock().clock_type)
             trans = self.tf_buffer.lookup_transform(
                 'world', 
                 f'{robot_name}/base_footprint', 
@@ -322,75 +319,96 @@ class DeterministicExplorer(Node):
         # Define a 3x3 structuring element for morphological operations (8-connectivity)
         struct = ndimage.generate_binary_structure(2, 2)
 
-        
+        # Identify raw frontiers (free space adjacent to unknown space)
         frontier_mask = (map_grid == 0) & ndimage.binary_dilation((map_grid == -1), structure=struct)
+
+        # Increase the thickness of the obstacles to avoid extracting frontiers too close to walls
         dilated_obstacles = ndimage.binary_dilation((map_grid == 100), iterations=7)
+
+        # Remove dilated_obstacles from the frontier_mask 
         frontier_mask = frontier_mask & (~dilated_obstacles)
     
+        # Group contiguous frontier pixels into separate labeled clusters
         labeled_array, num_features = ndimage.label(frontier_mask, structure=struct)
         centroids = []
     
         for i in range(1, num_features + 1):
             y_idx, x_idx = np.where(labeled_array == i)
             cluster_size = len(x_idx)
+
+            # Discard clusters that are too small to be considered real frontiers
             if cluster_size < min_frontier_size:
                 continue
     
-            # numero di punti proporzionale alla lunghezza della frontiera (non più cap fisso a 4)
+            # Compute a proportional number of target points to assign based on the cluster length
             num_points = max(1, min(30, cluster_size // 20))
     
             if num_points == 1:
-                # centroide vero, agganciato al pixel di frontiera più vicino
+                # Compute the centroid of the cluster
                 mx, my = x_idx.mean(), y_idx.mean()
+
+                # Find the actual frontier pixel closest to the mathematical centroid to avoid targeting walls
                 j = np.argmin((x_idx - mx)**2 + (y_idx - my)**2)
                 reps = [(int(x_idx[j]), int(y_idx[j]))]
             else:
-                # split GEOMETRICO: ordino lungo l'asse più lungo del cluster e taglio in chunk
+                # If the frontier is long, split it along its major axis
                 span_x = x_idx.max() - x_idx.min()
                 span_y = y_idx.max() - y_idx.min()
+
+                # Determine the longest axis to sort the pixels
                 key = x_idx if span_x >= span_y else y_idx
                 order = np.argsort(key)
     
                 reps = []
                 for chunk in np.array_split(order, num_points):
                     cxs, cys = x_idx[chunk], y_idx[chunk]
+
+                    # Compute the centroid of each chunk
                     mx, my = cxs.mean(), cys.mean()
+
+                    # Find the actual frontier pixel closest to the chunk's centroid
                     j = np.argmin((cxs - mx)**2 + (cys - my)**2)  # pixel reale, mai in mezzo a un muro
                     reps.append((int(cxs[j]), int(cys[j])))
-    
+
+            # Convert the selected pixel coordinates back to the global map reference frame
             for cx, cy in reps:
                 centroids.append((ox + cx * res, oy + cy * res))
     
         return centroids
  
+
+    # Function to coordinate the assignment of frontiers to idle robots using A* path cost
     def coordinator(self):
+        # Define a repulsion radius to prevent robots from going trought the same direction
         repulsion_radius = 1.0
 
         if not self.initial_trigger_done or self.merged_map is None:
             return
  
+        # Define a list of robots that are currently in idle
         idle_robots = [r for r in self.robots if self.robot_status[r] == 'IDLE']
         if not idle_robots: return
  
-        raw_frontiers = self.extract_frontiers()
-        if not raw_frontiers:
-            self.get_logger().info("🔍 Nessuna frontiera fisica estratta (Mappa chiusa).", throttle_duration_sec=5.0)
+        # Extract the geometrical centroids of the unexplored frontiers
+        frontiers_centroids = self.extract_frontiers()
+        if not frontiers_centroids:
+            self.get_logger().info(f"\033[94mNo frontier found.\033[0m", throttle_duration_sec=5.0)
             return
  
-        frontier_centroids = []
-        for fx, fy in raw_frontiers:
+        candidates_frontiers = []
+        for fx, fy in frontiers_centroids:
             too_close = False
             for r in self.robots:
                 pose = self.get_robot_pose(r)
-                # Il robot pulirà le frontiere a più di 40 cm da sé per evitare stalli infiniti
+                # Check if the robot's position is too close to the target (less than 0.4 meters)
                 if pose[0] is not None and self.euclidean_distance((pose[0], pose[1]), (fx, fy)) < 0.4:
                     too_close = True
                     break
             if not too_close:
-                frontier_centroids.append((fx, fy))
+                candidates_frontiers.append((fx, fy))
  
-        if not frontier_centroids:
-            self.get_logger().info(f"🔍 Trovate {len(raw_frontiers)} frontiere, ma tutte a meno di 40cm dai robot. Attendo espansione...", throttle_duration_sec=5.0)
+        if not candidates_frontiers:
+            self.get_logger().info(f"\033[91mFound {len(frontiers_centroids)} frontiers, but all too close to the robots.\033[0m", throttle_duration_sec=5.0)
             return
  
         ready_to_dispatch = []
@@ -406,31 +424,41 @@ class DeterministicExplorer(Node):
             best_frontier = None
             min_cost = float('inf')
  
+            # Build a list of goals currently assigned to other robots to avoid target overlapping
             active_goals = [goal for r, goal in self.assigned_goals.items() if goal is not None and r != robot]
             active_goals.extend([(gx, gy) for _, gx, gy in ready_to_dispatch])
  
-            for fx, fy in frontier_centroids:
+            for fx, fy in candidates_frontiers:
+                # Extract the positions of the other robots
                 other_poses = [p for p in all_poses if p != (rx, ry)]
+
+                # Calculate the A* path cost avoiding walls, unknown space, and other robots
                 path_cost = self.compute_path_cost((rx, ry), (fx, fy), other_poses)
                
                 if path_cost == float('inf'): continue
                
                 cost = path_cost
+
                 for ax, ay in active_goals:
+                    # If the frontiers is inside the repulsion radius of another robot's goal add a penalty
                     if self.euclidean_distance((fx, fy), (ax, ay)) < repulsion_radius:
                         cost += 5000.0  
  
+                # Upload the cost if it's lower than the other computation
                 if cost < min_cost:
                     min_cost = cost
                     best_frontier = (fx, fy)
  
+            # Assign a valid frontier if it is not heavily penalized
             if best_frontier is not None and min_cost < 5000.0:
                 self.assigned_goals[robot] = best_frontier
                 ready_to_dispatch.append((robot, best_frontier[0], best_frontier[1]))
-                frontier_centroids.remove(best_frontier)
+                # Remove the selected frontier from the list 
+                candidates_frontiers.remove(best_frontier)
             else:
-                self.get_logger().info(f"🚧 [{robot}] Frontiere trovate, ma TUTTE irraggiungibili (A* bloccato dai muri).", throttle_duration_sec=3.0)
+                self.get_logger().info(f"\033[91[{robot}]Inaccessible Frontiers\033[0m", throttle_duration_sec=3.0)
  
+        # Send the action goals to all the newly assigned robots
         for robot_name, gx, gy in ready_to_dispatch:
             self.dispatch_robot(robot_name, gx, gy)
  
@@ -470,63 +498,6 @@ class DeterministicExplorer(Node):
         future = self.action_clients[robot_name].send_goal_async(goal_msg)
         future.add_done_callback(lambda fut, r=robot_name: self.goal_response_callback(fut, r))
 
-
-
-
-
-
-
-
-        # pose_world = PoseStamped()
-        # pose_world.header.frame_id = 'world'
-        # pose_world.header.stamp = Time().to_msg()
-        # pose_world.pose.position.x = float(x)
-        # pose_world.pose.position.y = float(y)
-       
-        # last_pose = self.last_robot_poses.get(robot_name)
-        # rx = last_pose[0] if last_pose is not None else 0.0
-        # ry = last_pose[1] if last_pose is not None else 0.0
-        # yaw = math.atan2(y - ry, x - rx)
-       
-        # q = self.get_quaternion_from_euler(0.0, 0.0, yaw)
-        # pose_world.pose.orientation.x = q[0]
-        # pose_world.pose.orientation.y = q[1]
-        # pose_world.pose.orientation.z = q[2]
-        # pose_world.pose.orientation.w = q[3]
- 
-        # try:
-        #     transform = self.tf_buffer.lookup_transform(
-        #         f'{robot_name}/map',
-        #         'world',
-        #         Time(),
-        #         rclpy.duration.Duration(seconds=1.0))
-           
-        #     pose_local = tf2_geometry_msgs.do_transform_pose(pose_world.pose, transform)
-           
-        #     goal_msg = NavigateToPose.Goal()
-        #     goal_msg.pose.header.frame_id = f'{robot_name}/map'
-        #     goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-        #     goal_msg.pose.pose = pose_local
- 
-        #     self.robot_status[robot_name] = 'NAVIGATING'
-        #     self.get_logger().info(f"🎯 [{robot_name}] PARTITO! Goal assegnato: X={pose_local.position.x:.2f}, Y={pose_local.position.y:.2f}")
-           
-        #     future = self.action_clients[robot_name].send_goal_async(goal_msg)
-        #     future.add_done_callback(lambda fut, r=robot_name: self.goal_response_callback(fut, r))
-           
-        # except TransformException as ex:
-        #     self.get_logger().warn(f"[{robot_name}] Attesa TF per trasformazione: {ex}")
-        #     return
-
-
-
-
-
-
-
-
-
-
  
     # Function to check if any robot is stuck and force a goal change if necessary
     def check_robots_stall(self):
@@ -541,10 +512,10 @@ class DeterministicExplorer(Node):
                 
                 if last_pose is not None:
                     # Calculate the distance moved since the last check
-                    dist_moved = self.euclidian_distance((current_x, current_y), last_pose)
+                    dist_moved = self.euclidean_distance((current_x, current_y), last_pose)
                     
-                    # If the robot has moved less than 0.15 meters, consider it stuck and force a goal change
-                    if dist_moved < 0.15:
+                    # If the robot has moved less than 0.05 meters, consider it stuck and force a goal change
+                    if dist_moved < 0.05:
                         self.get_logger().error(f"\033[91m[{robot}] appears to be stuck. Forcing a new goal assignment.\033[0m")
                         self.reset_stuck_robot(robot)
                         continue 
@@ -608,26 +579,24 @@ class DeterministicExplorer(Node):
             
         # Check if all robots are idle
         all_robots_idle = all(status != 'NAVIGATING' for status in self.robot_status.values())
+        frontiers = self.extract_frontiers()
 
-        # Check if there are any frontiers available for exploration
-        target_x, target_y = self.find_collaborative_frontier()
-        has_frontiers = (target_x is not None and target_y is not None)
-        
         # Check if all robots are idle and there are no frontiers available
-        if all_robots_idle and not has_frontiers:
+        if all_robots_idle and len(frontiers) == 0:
             # Increment the counter for ticks with no frontiers
             self.no_frontiers_ticks += 1
             self.get_logger().info(f"\033[94mNo frontiers available. Shutting down... ({self.no_frontiers_ticks}/{self.max_ticks_to_stop})\033[0m")
-            
+
             # If the number of ticks with no frontiers exceeds the maximum allowed, terminate the exploration
             if self.no_frontiers_ticks >= self.max_ticks_to_stop:
                 self.terminate_exploration()
         else:
             # Reset the counter for ticks with no frontiers if there are frontiers available or robots are navigating
             self.no_frontiers_ticks = 0
-            
-            # If there are frontiers available and any robot is idle, call the coordinator to assign new goals
-            if has_frontiers and any(status == 'IDLE' for status in self.robot_status.values()):
+
+            # If there are frontiers available and any robot is idle, call the coordinator to assign new goals  
+            idle_without_goal = any(self.robot_status[r] == 'IDLE' and self.assigned_goals[r] is None for r in self.robots)
+            if frontiers and idle_without_goal:
                 self.coordinator()
  
     # Function to terminate the exploration process, save the merged map, print metrics, and shut down the node
