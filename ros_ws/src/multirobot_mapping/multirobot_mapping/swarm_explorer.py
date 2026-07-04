@@ -331,8 +331,8 @@ class StochasticExplorer(Node):
                     # Calculate the distance moved since the last check
                     dist_moved = self.euclidean_distance((current_x, current_y), last_pose)
                     
-                    # If the robot has moved less than 0.15 meters, consider it stuck and force a goal change
-                    if dist_moved < 0.15:
+                    # If the robot has moved less than 0.05 meters, consider it stuck and force a goal change
+                    if dist_moved < 0.05:
                         self.get_logger().error(f"\033[91m[{robot}] appears to be stuck. Forcing a new goal assignment.\033[0m")
                         self.reset_stuck_robot(robot)
                         continue 

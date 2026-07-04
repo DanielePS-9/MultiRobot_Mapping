@@ -269,7 +269,7 @@ def generate_launch_description():
 
     # Delay the launch of the swarm exploration node to ensure all robots are spawned and their TF topics are being relayed
     swarm_delay = TimerAction(
-        period=35.0,
+        period=45.0,
         actions=[
             swarm_explorer2_node
         ]
