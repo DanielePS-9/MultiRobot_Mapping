@@ -1,4 +1,4 @@
-# Autonomous Multi-Robot Swarm Mapping & Navigation
+# Autonomous Multi-Robot Mapping via Stochastic and Deterministic Exploration
 
 The aim of the project is to map an unknown simulated environment by deploying a swarm of three TurtleBot3 robots equipped with *Nav2*, *SLAM Toolbox*, and a centralized map merger system.
 
