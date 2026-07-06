@@ -3,8 +3,7 @@ RUN apt update -y && apt install -y ros-jazzy-rqt-graph
 RUN apt update -y && apt install -y wget
 RUN apt update -y && apt install -y liburdfdom-tools
 RUN apt update -y && apt install -y ros-jazzy-ros-gz
-RUN apt update -y && apt install -y ros-jazzy-navigation2 \
-                                    ros-jazzy-nav2-bringup
+RUN apt update -y && apt install -y ros-jazzy-navigation2 
 RUN apt update -y && apt install -y ros-jazzy-slam-toolbox 
 RUN apt update -y && apt install -y ros-jazzy-topic-tools   
 
