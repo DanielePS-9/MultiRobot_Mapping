@@ -4,6 +4,10 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess, TimerAction
+from laimport os
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import ExecuteProcess, TimerAction
 from launch_ros.actions import Node
  
 def generate_launch_description():
@@ -17,7 +21,7 @@ def generate_launch_description():
         executable='map_server',
         name='map_server_base',
         output='screen',
-        parameters=[{'yaml_filename': 'mappa_sciame_completata.yaml'}],
+        parameters=[{'yaml_filename': 'stochastic_swarm_map.yaml'}],
     )
  
     lifecycle_base = TimerAction(
@@ -37,7 +41,7 @@ def generate_launch_description():
         executable='map_server',
         name='map_server_2',
         output='screen',
-        parameters=[{'yaml_filename': 'mappa_sciame_completata_2.yaml'}],
+        parameters=[{'yaml_filename': 'deterministic_swarm_map.yaml'}],
         remappings=[('map', '/map_2')]
     )
  

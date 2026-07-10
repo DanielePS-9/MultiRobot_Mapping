@@ -88,13 +88,13 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /map_mk
+        Value: /map_2
       Update Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /map_mk_updates
+        Value: /map_2_updates
       Use Timestamp: false
       Value: true
   Enabled: true
