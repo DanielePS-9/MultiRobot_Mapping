@@ -75,7 +75,7 @@ ros2 launch multirobot_mapping deterministic_swarm.launch.py
 `./chown_me.sh`: A utility script to fix host-container file permission mismatches on shared workspace volumes.
 
 ## Project Report 
-A technical report detailing the project's theoretical background, system architecture, algorithm design (deterministic vs. stochastic), and experimental results is available here. 
+A technical report detailing the project's theoretical background, system architecture, algorithm design (deterministic vs. stochastic), and experimental results is available [here](Multirobot_mapping_MR26_07.pdf). 
 
 ## Simulation Demo
 A video demonstration highlighting the multi-robot system's mapping performance under both exploration algorithms is available here.
