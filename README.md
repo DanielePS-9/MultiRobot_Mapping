@@ -78,4 +78,4 @@ ros2 launch multirobot_mapping deterministic_swarm.launch.py
 A technical report detailing the project's theoretical background, system architecture, algorithm design (deterministic vs. stochastic), and experimental results is available [here](Multirobot_mapping_MR26_07.pdf). 
 
 ## Simulation Demo
-A video demonstration highlighting the multi-robot system's mapping performance under both exploration algorithms is available here.
+A video demonstration highlighting the multi-robot system's mapping performance under both exploration algorithms is available [here](https://politecnicobari-my.sharepoint.com/:f:/g/personal/s_febbraro_studenti_poliba_it/IgDrp99HJWF2T5Hd3c3mvCMNAQFmwhq0CkdRYjlboGL9p_A?e=aX1deg).
